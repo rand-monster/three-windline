@@ -1,0 +1,77 @@
+{
+  "name": "three-windline",
+  "version": "0.1.0",
+  "description": "Deterministic, camera-stable GPU wind ribbons for Three.js WebGPURenderer.",
+  "type": "module",
+  "license": "MIT",
+  "author": "rand.monster",
+  "homepage": "https://windline.rand.monster",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/rand-monster/three-windline.git"
+  },
+  "bugs": {
+    "url": "https://github.com/rand-monster/three-windline/issues"
+  },
+  "keywords": [
+    "three",
+    "threejs",
+    "webgpu",
+    "tsl",
+    "wind",
+    "vfx",
+    "instancing"
+  ],
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE",
+    "NOTICE.md"
+  ],
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./fields": {
+      "types": "./dist/fields/index.d.ts",
+      "import": "./dist/fields/index.js"
+    }
+  },
+  "sideEffects": false,
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "dev": "vite --config vite.demo.config.ts",
+    "build": "npm run build:lib && npm run build:demo",
+    "build:lib": "tsc -p tsconfig.build.json",
+    "build:demo": "vite build --config vite.demo.config.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "check": "npm run typecheck && npm test && npm run build && npm pack --dry-run",
+    "check:demo": "node scripts/check-demo.mjs",
+    "deploy": "npm run build && wrangler deploy -c wrangler.jsonc"
+  },
+  "peerDependencies": {
+    "three": ">=0.185.1 <0.186.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.3",
+    "@types/three": "0.185.1",
+    "lucide": "1.26.0",
+    "playwright-core": "1.61.1",
+    "pngjs": "7.0.0",
+    "three": "0.185.1",
+    "tsx": "4.23.1",
+    "typescript": "5.7.3",
+    "vite": "6.4.3",
+    "wrangler": "4.114.0"
+  },
+  "engines": {
+    "node": ">=20.19.0"
+  }
+}

@@ -1,4 +1,10 @@
-import type { WindLineOptions, WindLineStyle, WindLineStyleInput } from './types.js'
+import {
+  WIND_LINE_CURVES,
+  type WindLineCurve,
+  type WindLineOptions,
+  type WindLineStyle,
+  type WindLineStyleInput,
+} from './types.js'
 
 export const WIND_LINE_LIMITS = Object.freeze({
   minimumCapacity: 1,
@@ -15,9 +21,12 @@ export const DEFAULT_WIND_LINE_STYLE: Readonly<WindLineStyle> = Object.freeze({
   length: 15.5,
   widthCssPixels: Object.freeze([0.9, 1.7] as const),
   colors: Object.freeze([0xfff7e8, 0xb8fff4] as const),
+  colorRandomness: 0.32,
   opacity: 0.38,
   curveAmplitude: Object.freeze([2.4, 1.1] as const),
   curveFrequency: Object.freeze([0.19, 0.13] as const),
+  curveSweepRadians: Math.PI,
+  curveTurns: 1.5,
   nearFade: Object.freeze([1.8, 5.5] as const),
   farFade: Object.freeze([120, 190] as const),
   lifetime: Object.freeze([2.6, 6] as const),
@@ -34,6 +43,7 @@ export interface ResolvedWindLineOptions {
   readonly count: number
   readonly segments: number
   readonly seed: number
+  readonly curve: WindLineCurve
   readonly style: WindLineStyle
   readonly renderOrder: number
   readonly depthTest: boolean
@@ -41,9 +51,42 @@ export interface ResolvedWindLineOptions {
   readonly name: string
 }
 
+function optionalBoolean(name: string, value: unknown, fallback: boolean): boolean {
+  if (value === undefined) return fallback
+  if (typeof value !== 'boolean') {
+    throw new TypeError(`${name} must be a boolean`)
+  }
+  return value
+}
+
+function optionalString(name: string, value: unknown, fallback: string): string {
+  if (value === undefined) return fallback
+  if (typeof value !== 'string') {
+    throw new TypeError(`${name} must be a string`)
+  }
+  return value
+}
+
+function optionalScene(value: unknown): WindLineOptions['scene'] {
+  if (value === undefined) return undefined
+  if (
+    value === null
+    || typeof value !== 'object'
+    || typeof (value as { add?: unknown }).add !== 'function'
+  ) {
+    throw new TypeError('scene must be a Three.js scene')
+  }
+  return value as NonNullable<WindLineOptions['scene']>
+}
+
 function integerInRange(name: string, value: unknown, fallback: number, minimum: number, maximum: number) {
-  const number = value === undefined ? fallback : Number(value)
-  if (!Number.isInteger(number) || number < minimum || number > maximum) {
+  const number = value === undefined ? fallback : value
+  if (
+    typeof number !== 'number'
+    || !Number.isInteger(number)
+    || number < minimum
+    || number > maximum
+  ) {
     throw new RangeError(`${name} must be an integer from ${minimum} to ${maximum}`)
   }
   return number
@@ -56,11 +99,35 @@ function numberInRange(
   minimum: number,
   maximum: number,
 ) {
-  const number = value === undefined ? fallback : Number(value)
-  if (!Number.isFinite(number) || number < minimum || number > maximum) {
+  const number = value === undefined ? fallback : value
+  if (
+    typeof number !== 'number'
+    || !Number.isFinite(number)
+    || number < minimum
+    || number > maximum
+  ) {
     throw new RangeError(`${name} must be a finite number from ${minimum} to ${maximum}`)
   }
   return number
+}
+
+function windLineCurve(value: unknown): WindLineCurve {
+  const curve = value ?? 'flow'
+  if (
+    typeof curve !== 'string'
+    || !WIND_LINE_CURVES.includes(curve as WindLineCurve)
+  ) {
+    throw new RangeError(`curve must be one of: ${WIND_LINE_CURVES.join(', ')}`)
+  }
+  return curve as WindLineCurve
+}
+
+function blendingMode(value: unknown): 'normal' | 'additive' {
+  const blending = value ?? 'normal'
+  if (blending !== 'normal' && blending !== 'additive') {
+    throw new RangeError('blending must be normal or additive')
+  }
+  return blending
 }
 
 function orderedPair(
@@ -121,9 +188,24 @@ export function resolveWindLineStyle(
     length: numberInRange('length', input.length, base.length, 0.1, 1_000),
     widthCssPixels: orderedPair('widthCssPixels', input.widthCssPixels, base.widthCssPixels, 0.1),
     colors: [colors[0], colors[1]],
+    colorRandomness: numberInRange(
+      'colorRandomness',
+      input.colorRandomness,
+      base.colorRandomness,
+      0,
+      1,
+    ),
     opacity: numberInRange('opacity', input.opacity, base.opacity, 0, 1),
     curveAmplitude: finitePair('curveAmplitude', input.curveAmplitude, base.curveAmplitude, 0),
     curveFrequency: finitePair('curveFrequency', input.curveFrequency, base.curveFrequency, 0),
+    curveSweepRadians: numberInRange(
+      'curveSweepRadians',
+      input.curveSweepRadians,
+      base.curveSweepRadians,
+      0.01,
+      Math.PI * 2,
+    ),
+    curveTurns: numberInRange('curveTurns', input.curveTurns, base.curveTurns, 0, 32),
     nearFade: orderedPair('nearFade', input.nearFade, base.nearFade, 0),
     farFade: orderedPair('farFade', input.farFade, base.farFade, 0),
     lifetime: orderedPair('lifetime', input.lifetime, base.lifetime, 0.01),
@@ -167,21 +249,19 @@ export function resolveWindLineOptions(options: WindLineOptions = {}): ResolvedW
     WIND_LINE_LIMITS.minimumSegments,
     WIND_LINE_LIMITS.maximumSegments,
   )
-  const seedNumber = options.seed === undefined ? 0 : Number(options.seed)
-  if (!Number.isInteger(seedNumber) || seedNumber < 0 || seedNumber > 0xffff_ffff) {
-    throw new RangeError('seed must be an unsigned 32-bit integer')
-  }
+  const seed = integerInRange('seed', options.seed, 0, 0, 0xffff_ffff)
   return {
-    scene: options.scene,
+    scene: optionalScene(options.scene),
     field: options.field,
     capacity,
     count,
     segments,
-    seed: seedNumber >>> 0,
+    seed,
+    curve: windLineCurve(options.curve),
     style: resolveWindLineStyle(options.style),
     renderOrder: integerInRange('renderOrder', options.renderOrder, 3, -10_000, 10_000),
-    depthTest: options.depthTest !== false,
-    blending: options.blending === 'additive' ? 'additive' : 'normal',
-    name: options.name ?? 'three-windline-field',
+    depthTest: optionalBoolean('depthTest', options.depthTest, true),
+    blending: blendingMode(options.blending),
+    name: optionalString('name', options.name, 'three-windline-field'),
   }
 }

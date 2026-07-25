@@ -1,6 +1,6 @@
 {
   "name": "three-windline",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Deterministic, camera-stable GPU wind ribbons for Three.js WebGPURenderer.",
   "type": "module",
   "license": "MIT",
@@ -25,6 +25,7 @@
   "files": [
     "dist",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE",
     "NOTICE.md"
   ],
@@ -54,6 +55,7 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "check": "npm run typecheck && npm test && npm run build && npm pack --dry-run",
     "check:demo": "node scripts/check-demo.mjs",
+    "prepare": "npm run build:lib",
     "deploy": "npm run build && wrangler deploy -c wrangler.jsonc"
   },
   "peerDependencies": {
@@ -70,8 +72,5 @@
     "typescript": "5.7.3",
     "vite": "6.4.3",
     "wrangler": "4.114.0"
-  },
-  "engines": {
-    "node": ">=20.19.0"
   }
 }

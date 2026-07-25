@@ -334,6 +334,26 @@ button {
   text-transform: uppercase;
 }
 
+.select-control {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 22px;
+  color: #edf5ef;
+  font-size: 12px;
+}
+
+.select-control select {
+  min-width: 116px;
+  border: 1px solid rgba(225, 240, 230, 0.22);
+  border-radius: 4px;
+  padding: 7px 28px 7px 9px;
+  color: #edf5ef;
+  background: #182824;
+  font: 10px "SFMono-Regular", Consolas, "Liberation Mono", monospace;
+}
+
 .range-control {
   display: grid;
   grid-template-columns: 1fr auto;
@@ -341,6 +361,14 @@ button {
   margin-bottom: 22px;
   color: #edf5ef;
   font-size: 12px;
+}
+
+.range-control:has(input:disabled) {
+  opacity: 0.42;
+}
+
+.range-control input:disabled {
+  cursor: not-allowed;
 }
 
 .range-control:last-child {

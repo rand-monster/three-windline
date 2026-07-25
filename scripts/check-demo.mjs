@@ -101,6 +101,7 @@ function normalizeSnapshot(snapshot) {
     ready: snapshot?.ready === true,
     renderer: String(snapshot?.renderer ?? snapshot?.backend ?? '').toLowerCase(),
     frame: Number(snapshot?.frame ?? stats.updates ?? 0),
+    curve: String(snapshot?.curve ?? ''),
     drawCalls: Number(stats.drawCalls),
     activeLines: Number(stats.activeLines ?? stats.count),
     raw: snapshot,
@@ -110,6 +111,7 @@ function normalizeSnapshot(snapshot) {
 async function installGpuErrorCapture(page) {
   await page.addInitScript(() => {
     globalThis.__THREE_WINDLINE_GPU_ERRORS__ = []
+    globalThis.__THREE_WINDLINE_SHADERS__ = []
     const record = (value) => {
       const message = value instanceof Error ? value.message : String(value)
       globalThis.__THREE_WINDLINE_GPU_ERRORS__.push(message)
@@ -122,6 +124,14 @@ async function installGpuErrorCapture(page) {
     if (adapterPrototype && typeof originalRequestDevice === 'function') {
       adapterPrototype.requestDevice = async function requestDevice(...args) {
         const device = await originalRequestDevice.apply(this, args)
+        const createShaderModule = device.createShaderModule.bind(device)
+        device.createShaderModule = descriptor => {
+          globalThis.__THREE_WINDLINE_SHADERS__.push({
+            label: descriptor.label ?? '',
+            code: String(descriptor.code),
+          })
+          return createShaderModule(descriptor)
+        }
         device.addEventListener('uncapturederror', event => record(event.error))
         device.lost.then(info => {
           if (info.reason !== 'destroyed') record(`GPU device lost: ${info.reason} ${info.message}`)
@@ -218,6 +228,71 @@ async function runVariant(browser, backend) {
       `${backend} snapshot must report visible wind lines`,
     )
 
+    const curves = ['flow', 'straight', 'arc', 'ring', 'helix', 'spiral']
+    const compiledCurves = []
+    for (const curve of curves) {
+      assert.equal(
+        await page.evaluate(
+          value => globalThis.__threeWindlineDemo?.setCurve(value),
+          curve,
+        ),
+        true,
+        `${backend} rejected curve ${curve}`,
+      )
+      await page.waitForFunction(
+        value => {
+          const state = globalThis.__threeWindlineDemo?.snapshot()
+          return state?.curve === value
+            && Number(state?.windline?.updates) >= 3
+            && Number(state?.windline?.drawCalls) === 1
+        },
+        curve,
+        { timeout },
+      )
+      const state = normalizeSnapshot(await page.evaluate(readDemoSnapshot))
+      assert.equal(state.curve, curve)
+      assert.equal(state.drawCalls, 1)
+      compiledCurves.push(curve)
+    }
+    assert.equal(
+      await page.evaluate(() => globalThis.__threeWindlineDemo?.setPreset('breeze')),
+      true,
+    )
+
+    let shaderBudget
+    if (backend === 'webgpu') {
+      shaderBudget = await page.evaluate(() => {
+        const count = (source, token) => source.split(token).length - 1
+        return globalThis.__THREE_WINDLINE_SHADERS__
+          .filter(shader => shader.label.includes('three-windline-gpu-ribbon-material'))
+          .map(shader => ({
+            stage: shader.label.startsWith('vertex') ? 'vertex' : 'fragment',
+            bytes: shader.code.length,
+            sin: count(shader.code, 'sin('),
+            cos: count(shader.code, 'cos('),
+            normalize: count(shader.code, 'normalize('),
+            readsInstanceSeed: shader.code.includes('aWindSeed'),
+          }))
+      })
+      const vertexShaders = shaderBudget.filter(shader => shader.stage === 'vertex')
+      const fragmentShaders = shaderBudget.filter(shader => shader.stage === 'fragment')
+      assert.equal(vertexShaders.length, curves.length)
+      assert.equal(fragmentShaders.length, curves.length)
+      assert.ok(vertexShaders.every(shader => shader.bytes < 10_000))
+      assert.ok(vertexShaders.every(shader => shader.normalize <= 7))
+      assert.ok(fragmentShaders.every(shader => shader.bytes < 2_000))
+      assert.ok(fragmentShaders.every(shader => (
+        shader.sin === 0
+        && shader.cos === 0
+        && shader.normalize === 0
+        && shader.readsInstanceSeed === false
+      )), 'windline path math leaked into the fragment shader')
+      assert.deepEqual(
+        vertexShaders.map(shader => shader.sin + shader.cos),
+        [4, 0, 2, 2, 2, 2],
+      )
+    }
+
     const initialSizing = await canvas.evaluate(element => {
       const rect = element.getBoundingClientRect()
       return {
@@ -284,6 +359,8 @@ async function runVariant(browser, backend) {
       backend,
       renderer: final.renderer,
       frame: final.frame,
+      compiledCurves,
+      shaderBudget,
       stats: final.raw.stats ?? final.raw.windline,
       deviceScaleFactor: initialSizing.dpr,
       screenshot: targetPath,

@@ -44,22 +44,26 @@ npm run dev
 npm run check:demo
 ```
 
-The browser check exercises native WebGPU and the `WebGPURenderer` WebGL2
-fallback, watches for GPU validation errors, and checks rendered pixels.
+The browser check compiles every curve program on native WebGPU and the
+`WebGPURenderer` WebGL2 fallback, watches for GPU validation errors, checks
+rendered pixels, and enforces the fragment-shader instruction budget.
 
 ## Design Constraints
 
 Changes to the core should retain these properties unless a proposal explicitly
 justifies a contract change:
 
-- One draw call per visible `ThreeWindLineSystem`.
+- One draw call per visible wind-line system.
 - `InstancedBufferGeometry`, without an unused `instanceMatrix`.
 - Static `aWindSeed` and `aWindTrait` buffers after construction.
 - No dynamic per-instance uploads in `update()`.
+- Construction-time curve specialization; fixed curves must not execute a
+  runtime family switch.
 - No compute pass for the analytic ribbon path.
 - Caller-owned targets for field samples and statistics.
 - Deterministic output for the same seed and frame inputs.
 - Camera-stable CSS-pixel width and edge anti-aliasing.
+- Centerline and instance-color math stays in the vertex stage.
 - Compatibility with Three.js r185.1 on both supported backends.
 
 The system samples a `WindField` once at the anchor and sends velocity,

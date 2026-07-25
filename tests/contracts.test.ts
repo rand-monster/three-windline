@@ -20,7 +20,12 @@ import {
   tslHashFixture,
 } from '../src/seed.js'
 import { createWindLineSystem } from '../src/system.js'
-import type { WindLineFrame, WindLineStats } from '../src/types.js'
+import type {
+  WindLineFrame,
+  WindLineOptions,
+  WindLineStats,
+} from '../src/types.js'
+import { WIND_LINE_CURVES } from '../src/types.js'
 import {
   InstancedBufferAttribute,
   InstancedBufferGeometry,
@@ -60,7 +65,7 @@ test('seed buffers are deterministic, bounded, finite, and seed-sensitive', () =
   assert.notDeepEqual(first.positions, different.positions)
   assert.notDeepEqual(first.traits, different.traits)
   assert.equal(first.positions.byteLength, 64 * 4 * Float32Array.BYTES_PER_ELEMENT)
-  assert.equal(first.traits.byteLength, 64 * 4 * Float32Array.BYTES_PER_ELEMENT)
+  assert.equal(first.traits.byteLength, 64 * 4 * Uint8Array.BYTES_PER_ELEMENT)
 
   for (let offset = 0; offset < first.positions.length; offset += 4) {
     assert.ok(first.positions[offset]! >= -1 && first.positions[offset]! <= 1)
@@ -69,6 +74,13 @@ test('seed buffers are deterministic, bounded, finite, and seed-sensitive', () =
     assert.ok(first.positions[offset + 3]! >= 0 && first.positions[offset + 3]! < 1)
   }
   assert.ok([...first.positions, ...first.traits].every(Number.isFinite))
+  for (let lane = 0; lane < 4; lane += 1) {
+    const unique = new Set<number>()
+    for (let offset = lane; offset < first.traits.length; offset += 4) {
+      unique.add(first.traits[offset]!)
+    }
+    assert.ok(unique.size > 48, `trait lane ${lane} has only ${unique.size} unique values`)
+  }
 })
 
 test('wind-line geometry is one instanced ribbon without instance matrices', () => {
@@ -88,6 +100,7 @@ test('wind-line geometry is one instanced ribbon without instance matrices', () 
     assert.equal(geometry.getAttribute('aWindTrait').count, capacity)
     assert.equal(getInstancedAttribute(geometry, 'aWindSeed').count, capacity)
     assert.equal(getInstancedAttribute(geometry, 'aWindTrait').count, capacity)
+    assert.equal(getInstancedAttribute(geometry, 'aWindTrait').normalized, true)
   } finally {
     geometry.dispose()
   }
@@ -99,6 +112,7 @@ test('options and style validation fail early at the public capacity boundaries'
     count: 71,
     segments: 32,
     seed: 0xffff_ffff,
+    curve: 'helix',
     style: {
       widthCssPixels: [1.1, 2.2],
       colors: ['#ffffff', '#74f7ff'],
@@ -109,6 +123,7 @@ test('options and style validation fail early at the public capacity boundaries'
   assert.equal(resolved.count, 71)
   assert.equal(resolved.segments, 32)
   assert.equal(resolved.seed, 0xffff_ffff)
+  assert.equal(resolved.curve, 'helix')
   assert.deepEqual(resolved.style.widthCssPixels, [1.1, 2.2])
   assert.notStrictEqual(resolved.style.widthCssPixels, DEFAULT_WIND_LINE_STYLE.widthCssPixels)
 
@@ -122,8 +137,24 @@ test('options and style validation fail early at the public capacity boundaries'
     { seed: 1.5 },
     { seed: Number.NaN },
     { seed: 0x1_0000_0000 },
-  ]) {
-    assert.throws(() => resolveWindLineOptions(options), RangeError)
+    { curve: 'bezier' },
+    { blending: 'screen' },
+    { capacity: '8' },
+  ] as readonly unknown[]) {
+    assert.throws(
+      () => resolveWindLineOptions(options as WindLineOptions),
+      RangeError,
+    )
+  }
+  for (const options of [
+    { depthTest: 'false' },
+    { name: 12 },
+    { scene: {} },
+  ] as readonly unknown[]) {
+    assert.throws(
+      () => resolveWindLineOptions(options as WindLineOptions),
+      TypeError,
+    )
   }
 
   for (const style of [
@@ -131,12 +162,47 @@ test('options and style validation fail early at the public capacity boundaries'
     { verticalHalfSpan: Number.NaN },
     { widthCssPixels: [2, 1] as const },
     { opacity: 1.01 },
+    { colorRandomness: 1.01 },
+    { curveSweepRadians: 0 },
+    { curveTurns: 33 },
     { colors: ['#fff'] as unknown as readonly [string, string] },
     { lifetime: [0, 1] as const },
     { nearFade: [8, 4] as const },
     { visibilityResponse: 101 },
   ]) {
     assert.throws(() => resolveWindLineStyle(style), RangeError)
+  }
+})
+
+test('every curve family specializes one system without changing the instance layout', () => {
+  for (const curve of WIND_LINE_CURVES) {
+    const system = createWindLineSystem({
+      curve,
+      capacity: 16,
+      count: 8,
+      segments: 20,
+    })
+    try {
+      const geometry = system.mesh.geometry
+      assert.ok(geometry instanceof InstancedBufferGeometry)
+      assert.equal(system.curve, curve)
+      assert.equal(geometry.instanceCount, 8)
+      assert.equal(geometry.getAttribute('instanceMatrix'), undefined)
+      assert.equal(getInstancedAttribute(geometry, 'aWindTrait').normalized, true)
+      const positions = geometry.getAttribute('position')
+      assert.equal(
+        positions.getY(0),
+        curve === 'ring' ? 0.5 : 0,
+        `${curve} has the wrong head taper`,
+      )
+      assert.equal(
+        positions.getY(positions.count - 2),
+        curve === 'ring' ? 0.5 : 0,
+        `${curve} has the wrong tail taper`,
+      )
+    } finally {
+      system.dispose()
+    }
   }
 })
 
@@ -196,6 +262,60 @@ test('built-in fields overwrite a caller-owned finite sample without replacing i
   assert.deepEqual(position.toArray(), [2, 4, 6], 'sampling must not mutate the query position')
 })
 
+test('nonlinear field Jacobians match finite differences', () => {
+  const fields = [
+    new CoherentWindField({
+      baseVelocity: [8.2, 0.3, -2.6],
+      gustSpeed: 11,
+      turbulence: 0.9,
+    }),
+    new VortexWindField({
+      center: [-3, 2, 5],
+      baseVelocity: [0.5, 0.1, -0.2],
+      angularSpeed: 1.7,
+      radialInflow: 0.42,
+      lift: 5.8,
+      turbulence: 0.6,
+      softeningRadius: 6.5,
+    }),
+  ]
+  const points = [
+    new Vector3(0, 4, 0),
+    new Vector3(2.5, -8, 7.25),
+    new Vector3(-19, 3, 14),
+    new Vector3(31, 12, -27),
+  ]
+  const center = createWindSampleTarget()
+  const plus = createWindSampleTarget()
+  const minus = createWindSampleTarget()
+  const offset = new Vector3()
+  const epsilon = 1e-3
+
+  for (const field of fields) {
+    for (const point of points) {
+      field.sample(point, 17.25, center)
+      const elements = center.jacobian.elements
+      for (let axis = 0; axis < 3; axis += 1) {
+        offset.copy(point).setComponent(axis, point.getComponent(axis) + epsilon)
+        field.sample(offset, 17.25, plus)
+        offset.copy(point).setComponent(axis, point.getComponent(axis) - epsilon)
+        field.sample(offset, 17.25, minus)
+        for (let component = 0; component < 3; component += 1) {
+          const finiteDifference = (
+            plus.velocity.getComponent(component)
+            - minus.velocity.getComponent(component)
+          ) / (epsilon * 2)
+          const analytic = elements[axis * 3 + component]!
+          assert.ok(
+            Math.abs(analytic - finiteDifference) < 2e-5,
+            `${field.constructor.name} J[${component},${axis}] ${analytic} != ${finiteDifference}`,
+          )
+        }
+      }
+    }
+  }
+})
+
 test('coherent field matches the native Rust WeatherWindField fixture', () => {
   const field = new CoherentWindField({
     baseVelocity: [1.7, 0, -0.9],
@@ -219,9 +339,23 @@ test('coherent field matches the native Rust WeatherWindField fixture', () => {
   }
 })
 
-test('built-in fields reject non-finite scalar configuration', () => {
+test('built-in fields reject malformed configuration at construction', () => {
   assert.throws(() => new AffineWindField({ turbulence: Number.NaN }), RangeError)
+  assert.throws(
+    () => new AffineWindField({ jacobian: [1, 0, 0] as unknown as Matrix3 }),
+    RangeError,
+  )
+  assert.throws(
+    () => new UniformWindField([1, Number.NaN, 2]),
+    RangeError,
+  )
   assert.throws(() => new CoherentWindField({ gustSpeed: Number.POSITIVE_INFINITY }), RangeError)
+  assert.throws(
+    () => new CoherentWindField({
+      baseVelocity: [1, 2] as unknown as [number, number, number],
+    }),
+    RangeError,
+  )
   assert.throws(() => new CoherentWindField({ turbulence: -1 }), RangeError)
   assert.throws(() => new VortexWindField({ angularSpeed: Number.NaN }), RangeError)
   assert.throws(() => new VortexWindField({ softeningRadius: 0 }), RangeError)
@@ -296,7 +430,10 @@ test('system update is one instanced draw with no instance matrix or seed upload
     assert.equal(stats.segments, 28)
     assert.equal(stats.drawCalls, 1)
     assert.equal(stats.triangles, 72 * 28 * 2)
-    assert.equal(stats.seedBytes, 128 * 8 * Float32Array.BYTES_PER_ELEMENT)
+    assert.equal(stats.seedBytes, 128 * (
+      4 * Float32Array.BYTES_PER_ELEMENT
+      + 4 * Uint8Array.BYTES_PER_ELEMENT
+    ))
     assert.equal(stats.updates, 240)
     assert.equal(stats.dynamicInstanceUploads, 0)
     assert.equal(stats.visible, true)
@@ -324,7 +461,7 @@ test('setCount changes only the instanced draw range and validates capacity', ()
     assert.equal(geometry.instanceCount, 31)
     system.readStats(stats)
     assert.equal(stats.count, 31)
-    assert.equal(stats.drawCalls, 1)
+    assert.equal(stats.drawCalls, 0)
     assert.equal(stats.triangles, 31 * 12 * 2)
 
     system.setCount(0)
@@ -370,7 +507,10 @@ test('inactive updates sleep the draw and dispose is event-once and idempotent',
   system.mesh.geometry.addEventListener('dispose', () => {
     geometryDisposals += 1
   })
-  system.mesh.material.addEventListener('dispose', () => {
+  const material = system.mesh.material
+  assert.equal(Array.isArray(material), false)
+  if (Array.isArray(material)) throw new TypeError('windline material must be singular')
+  material.addEventListener('dispose', () => {
     materialDisposals += 1
   })
 
@@ -414,12 +554,14 @@ test('runtime style updates validate before touching static geometry', () => {
       length: 24,
       widthCssPixels: [1.25, 2.5],
       colors: ['#fff4dc', '#9affee'],
+      colorRandomness: 0.86,
       visibilityThreshold: [0.1, 2],
     })
     assert.strictEqual(system.mesh.geometry, geometry)
     assert.equal(seedAttribute.version, seedVersion)
     assert.equal(traitAttribute.version, traitVersion)
     assert.throws(() => system.setStyle({ opacity: Number.NaN }), RangeError)
+    assert.throws(() => system.setStyle({ colorRandomness: -0.01 }), RangeError)
     assert.throws(() => system.setStyle({ widthCssPixels: [3, 2] }), RangeError)
     assert.throws(
       () => system.setStyle({ colors: [] as unknown as [string, string] }),

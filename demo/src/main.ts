@@ -14,8 +14,10 @@ import {
   CoherentWindField,
   UniformWindField,
   VortexWindField,
+  WIND_LINE_CURVES,
   createWindLineSystem,
   type WindField,
+  type WindLineCurve,
   type WindLineStats,
 } from 'three-windline'
 
@@ -29,6 +31,9 @@ interface DemoControls {
   length: number
   width: number
   opacity: number
+  colorRandomness: number
+  curveSweep: number
+  curveTurns: number
 }
 
 interface PresetDefinition {
@@ -37,6 +42,7 @@ interface PresetDefinition {
   readonly label: string
   readonly fieldLabel: string
   readonly metric: string
+  readonly curve: WindLineCurve
   readonly controls: DemoControls
   readonly colors: readonly [THREE.ColorRepresentation, THREE.ColorRepresentation]
   readonly curveAmplitude: readonly [number, number]
@@ -52,6 +58,7 @@ interface DemoSnapshot {
   readonly ready: boolean
   readonly paused: boolean
   readonly preset: DemoPresetId
+  readonly curve: WindLineCurve
   readonly backend: string
   readonly fps: number
   readonly draws: number
@@ -69,6 +76,7 @@ interface ThreeWindlineDemoBridge {
   readonly controls: OrbitControls
   readonly windline: ReturnType<typeof createWindLineSystem>
   setPreset(preset: DemoPresetId): boolean
+  setCurve(curve: WindLineCurve): boolean
   setPaused(paused: boolean): void
   reset(): void
   snapshot(): DemoSnapshot
@@ -88,7 +96,18 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     label: 'Breeze',
     fieldLabel: 'uniform',
     metric: '6.8 m/s',
-    controls: { density: 256, speed: 1, gust: 5.5, length: 22, width: 2.1, opacity: 0.7 },
+    curve: 'flow',
+    controls: {
+      density: 256,
+      speed: 1,
+      gust: 5.5,
+      length: 22,
+      width: 2.1,
+      opacity: 0.7,
+      colorRandomness: 0.18,
+      curveSweep: 180,
+      curveTurns: 1.5,
+    },
     colors: [0xfff1c7, 0xd9fff1],
     curveAmplitude: [2.2, 0.85],
     regionRadius: 60,
@@ -104,7 +123,18 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     label: 'Canyon Shear',
     fieldLabel: 'affine',
     metric: '11.2 m/s',
-    controls: { density: 320, speed: 1.15, gust: 8, length: 26, width: 2.2, opacity: 0.72 },
+    curve: 'arc',
+    controls: {
+      density: 320,
+      speed: 1.15,
+      gust: 8,
+      length: 26,
+      width: 2.2,
+      opacity: 0.72,
+      colorRandomness: 0.24,
+      curveSweep: 132,
+      curveTurns: 1.5,
+    },
     colors: [0xffd08d, 0xbff7e8],
     curveAmplitude: [3.4, 1.15],
     regionRadius: 58,
@@ -120,22 +150,26 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     label: 'Tornado',
     fieldLabel: 'vortex',
     metric: '1.55 rad/s',
+    curve: 'straight',
     controls: {
-      density: 280,
-      speed: 1.2,
+      density: 112,
+      speed: 1.1,
       gust: 10,
-      length: 6.5,
-      width: 2.4,
-      opacity: 0.7,
+      length: 4,
+      width: 1.6,
+      opacity: 0.48,
+      colorRandomness: 0.58,
+      curveSweep: 180,
+      curveTurns: 0.85,
     },
     colors: [0xffc675, 0x9ef4dd],
-    curveAmplitude: [0.9, 0.45],
-    regionRadius: 10,
+    curveAmplitude: [0.3, 0.12],
+    regionRadius: 8.8,
     verticalHalfSpan: 14,
     centerLift: 8,
-    lifetime: [0.3, 0.8],
-    speedRange: [1, 5],
-    fieldSpeedMultiplier: 0.35,
+    lifetime: [0.48, 0.95],
+    speedRange: [1.2, 3.2],
+    fieldSpeedMultiplier: 0.28,
   },
   storm: {
     id: 'storm',
@@ -143,7 +177,18 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     label: 'Storm Front',
     fieldLabel: 'coherent',
     metric: '17.5 m/s',
-    controls: { density: 480, speed: 1.55, gust: 16, length: 34, width: 2.2, opacity: 0.68 },
+    curve: 'flow',
+    controls: {
+      density: 480,
+      speed: 1.55,
+      gust: 16,
+      length: 34,
+      width: 2.2,
+      opacity: 0.68,
+      colorRandomness: 0.3,
+      curveSweep: 180,
+      curveTurns: 1.5,
+    },
     colors: [0xffd49d, 0xc0f3ff],
     curveAmplitude: [4.1, 1.8],
     regionRadius: 66,
@@ -161,7 +206,17 @@ const OBSERVER_VELOCITY = new THREE.Vector3()
 const BREEZE_DIRECTION = new THREE.Vector3(0.95, 0.025, 0.31).normalize()
 const STORM_DIRECTION = new THREE.Vector3(0.78, -0.015, 0.63).normalize()
 const BREEZE_VELOCITY_SCRATCH = new THREE.Vector3()
-const sliderIds = ['density', 'speed', 'gust', 'length', 'width', 'opacity'] as const
+const sliderIds = [
+  'density',
+  'speed',
+  'gust',
+  'length',
+  'width',
+  'opacity',
+  'colorRandomness',
+  'curveSweep',
+  'curveTurns',
+] as const
 type SliderId = (typeof sliderIds)[number]
 
 function requiredElement<T extends HTMLElement>(id: string): T {
@@ -176,6 +231,8 @@ function formatControl(id: SliderId, value: number): string {
   if (id === 'gust') return `${value.toFixed(1)} m/s`
   if (id === 'length') return `${value.toFixed(1)} m`
   if (id === 'width') return `${value.toFixed(1)} px`
+  if (id === 'curveSweep') return `${Math.round(value)}°`
+  if (id === 'curveTurns') return value.toFixed(2)
   return `${Math.round(value * 100)}%`
 }
 
@@ -201,7 +258,6 @@ async function start(): Promise<void> {
   installIcons()
   const viewport = requiredElement<HTMLDivElement>('viewport')
   const loading = requiredElement<HTMLDivElement>('loading')
-  const fatalError = requiredElement<HTMLDivElement>('fatalError')
   const backendState = requiredElement<HTMLDivElement>('backendState')
   const backendLabel = requiredElement<HTMLSpanElement>('backendLabel')
   const fpsValue = requiredElement<HTMLElement>('fpsValue')
@@ -215,6 +271,7 @@ async function start(): Promise<void> {
   const closeSettingsButton = requiredElement<HTMLButtonElement>('closeSettingsButton')
   const pauseButton = requiredElement<HTMLButtonElement>('pauseButton')
   const resetButton = requiredElement<HTMLButtonElement>('resetButton')
+  const curveSelect = requiredElement<HTMLSelectElement>('curveSelect')
   const presetButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-preset]')]
   const sliders = Object.fromEntries(sliderIds.map((id) => [
     id,
@@ -237,7 +294,6 @@ async function start(): Promise<void> {
   })
   renderer.domElement.id = 'windlineCanvas'
   renderer.domElement.dataset.windlineCanvas = ''
-  renderer.domElement.tabIndex = 0
   renderer.setPixelRatio(Math.min(globalThis.devicePixelRatio || 1, 1.75))
   renderer.outputColorSpace = THREE.SRGBColorSpace
   renderer.toneMapping = THREE.AgXToneMapping
@@ -271,35 +327,47 @@ async function start(): Promise<void> {
     tornado: new VortexWindField(),
     storm: new CoherentWindField(),
   } satisfies Record<DemoPresetId, WindField>
-  const windline = createWindLineSystem({
-    scene,
-    capacity: 480,
-    count: PRESETS.breeze.controls.density,
-    segments: 28,
-    seed: 0x51a1_f10d,
-    style: {
-      regionRadius: PRESETS.breeze.regionRadius,
-      verticalHalfSpan: PRESETS.breeze.verticalHalfSpan,
-      centerLift: PRESETS.breeze.centerLift,
-      forwardBias: 0.12,
-      length: PRESETS.breeze.controls.length,
-      widthCssPixels: [0.95, PRESETS.breeze.controls.width],
-      colors: PRESETS.breeze.colors,
-      opacity: PRESETS.breeze.controls.opacity,
-      curveAmplitude: PRESETS.breeze.curveAmplitude,
-      curveFrequency: [0.16, 0.11],
-      nearFade: [4, 9],
-      farFade: [118, 178],
-      lifetime: [2.2, 5.8],
-      speed: [4, 32],
-      fieldSpeedMultiplier: 1.8,
-      visibilityResponse: 7,
-      visibilityThreshold: [0.05, 1],
-    },
-    renderOrder: 5,
-    blending: 'normal',
-  })
   const runtimeControls: DemoControls = { ...PRESETS.breeze.controls }
+  let activePreset: DemoPresetId = 'breeze'
+  let activeCurve: WindLineCurve = PRESETS.breeze.curve
+  let activeField: WindField = fields.breeze
+
+  function createWindline(curve: WindLineCurve) {
+    return createWindLineSystem({
+      scene,
+      curve,
+      capacity: 480,
+      count: PRESETS.breeze.controls.density,
+      segments: 28,
+      seed: 0x51a1_f10d,
+      style: {
+        regionRadius: PRESETS.breeze.regionRadius,
+        verticalHalfSpan: PRESETS.breeze.verticalHalfSpan,
+        centerLift: PRESETS.breeze.centerLift,
+        forwardBias: 0.12,
+        length: PRESETS.breeze.controls.length,
+        widthCssPixels: [0.95, PRESETS.breeze.controls.width],
+        colors: PRESETS.breeze.colors,
+        colorRandomness: PRESETS.breeze.controls.colorRandomness,
+        opacity: PRESETS.breeze.controls.opacity,
+        curveAmplitude: PRESETS.breeze.curveAmplitude,
+        curveFrequency: [0.16, 0.11],
+        curveSweepRadians: Math.PI,
+        curveTurns: PRESETS.breeze.controls.curveTurns,
+        nearFade: [4, 9],
+        farFade: [118, 178],
+        lifetime: [2.2, 5.8],
+        speed: [4, 32],
+        fieldSpeedMultiplier: 1.8,
+        visibilityResponse: 7,
+        visibilityThreshold: [0.05, 1],
+      },
+      renderOrder: 5,
+      blending: 'normal',
+    })
+  }
+
+  let windline = createWindline(activeCurve)
   const windlineStats: WindLineStats = {
     capacity: 0,
     count: 0,
@@ -315,8 +383,6 @@ async function start(): Promise<void> {
     dynamicInstanceUploads: 0,
     disposed: false,
   }
-  let activePreset: DemoPresetId = 'breeze'
-  let activeField: WindField = fields.breeze
   let paused = false
   let simulationTime = 0
   let previousNow = performance.now() * 0.001
@@ -349,6 +415,11 @@ async function start(): Promise<void> {
     for (const id of sliderIds) syncSlider(id, runtimeControls[id])
   }
 
+  function syncCurveControls(): void {
+    sliders.curveSweep.disabled = activeCurve !== 'arc'
+    sliders.curveTurns.disabled = activeCurve !== 'helix' && activeCurve !== 'spiral'
+  }
+
   function configureField(preset: DemoPresetId): WindField {
     const speed = runtimeControls.speed
     const gust = runtimeControls.gust
@@ -372,12 +443,12 @@ async function start(): Promise<void> {
     if (preset === 'tornado') {
       fields.tornado.configure({
         center: world.vortexCenter,
-        baseVelocity: [0.65 * speed, 0, 0.15],
-        angularSpeed: 1.8 * speed + gust * 0.035,
-        radialInflow: 0.55 + gust * 0.015,
-        lift: 5.6 + gust * 0.18,
-        turbulence: 0.45 + gust * 0.06,
-        softeningRadius: 7.5,
+        baseVelocity: [0.45 * speed, 0, 0.1],
+        angularSpeed: 1.55 * speed + gust * 0.025,
+        radialInflow: 0.38 + gust * 0.01,
+        lift: 4.7 + gust * 0.13,
+        turbulence: 0.12 + gust * 0.018,
+        softeningRadius: 6,
       })
       return fields.tornado
     }
@@ -399,8 +470,11 @@ async function start(): Promise<void> {
       length: runtimeControls.length,
       widthCssPixels: [minimumWidth, maximumWidth],
       colors: definition.colors,
+      colorRandomness: runtimeControls.colorRandomness,
       opacity: runtimeControls.opacity,
       curveAmplitude: definition.curveAmplitude,
+      curveSweepRadians: THREE.MathUtils.degToRad(runtimeControls.curveSweep),
+      curveTurns: runtimeControls.curveTurns,
       lifetime: definition.lifetime,
       speed: definition.speedRange,
       fieldSpeedMultiplier: definition.fieldSpeedMultiplier * runtimeControls.speed,
@@ -417,11 +491,31 @@ async function start(): Promise<void> {
     fieldMetric.textContent = `${speed} · ${definition.fieldLabel}`
   }
 
+  function replaceWindline(curve: WindLineCurve): void {
+    if (curve === activeCurve) return
+    const previous = windline
+    windline = createWindline(curve)
+    activeCurve = curve
+    previous.dispose()
+  }
+
+  function setCurve(curve: WindLineCurve): boolean {
+    if (!WIND_LINE_CURVES.includes(curve)) return false
+    replaceWindline(curve)
+    windline.setField(activeField)
+    windline.setCount(runtimeControls.density)
+    applyStyle(PRESETS[activePreset])
+    curveSelect.value = activeCurve
+    syncCurveControls()
+    return true
+  }
+
   function setPreset(preset: DemoPresetId, resetParameters = true): boolean {
     const definition = PRESETS[preset]
     if (!definition) return false
     activePreset = preset
     if (resetParameters) Object.assign(runtimeControls, definition.controls)
+    replaceWindline(definition.curve)
     activeField = configureField(preset)
     windline.setField(activeField)
     windline.setCount(runtimeControls.density)
@@ -432,7 +526,9 @@ async function start(): Promise<void> {
       button.classList.toggle('is-active', selected)
       button.setAttribute('aria-pressed', String(selected))
     }
+    curveSelect.value = activeCurve
     syncAllSliders()
+    syncCurveControls()
     updateFieldReadout()
     return true
   }
@@ -483,6 +579,7 @@ async function start(): Promise<void> {
       ready: bridge.ready,
       paused,
       preset: activePreset,
+      curve: activeCurve,
       backend,
       fps,
       draws,
@@ -512,8 +609,11 @@ async function start(): Promise<void> {
     scene,
     camera,
     controls,
-    windline,
+    get windline() {
+      return windline
+    },
     setPreset: (preset) => setPreset(preset, true),
+    setCurve,
     setPaused,
     reset,
     snapshot,
@@ -532,6 +632,9 @@ async function start(): Promise<void> {
       updateLiveParameter(id, Number(sliders[id].value))
     }, listen)
   }
+  curveSelect.addEventListener('change', () => {
+    setCurve(curveSelect.value as WindLineCurve)
+  }, listen)
   settingsButton.addEventListener('click', () => {
     setSettingsOpen(settingsDrawer.hidden, settingsDrawer.hidden)
   }, listen)

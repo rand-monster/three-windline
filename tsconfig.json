@@ -4,7 +4,18 @@
     "useDefineForClassFields": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "three-windline": [
+        "./src/index.ts"
+      ],
+      "three-windline/fields": [
+        "./src/fields/index.ts"
+      ]
+    },
     "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
     "noUncheckedIndexedAccess": true,
     "noImplicitOverride": true,
     "skipLibCheck": true,

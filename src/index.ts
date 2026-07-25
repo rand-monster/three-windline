@@ -12,14 +12,13 @@ export {
   type CoherentWindFieldOptions,
   type VortexWindFieldOptions,
 } from './fields/index.js'
-export {
-  ThreeWindLineSystem,
-  createWindLineSystem,
-} from './system.js'
+export { createWindLineSystem } from './system.js'
+export { WIND_LINE_CURVES } from './types.js'
 export type {
   Matrix3Like,
   Vec3Like,
   WindField,
+  WindLineCurve,
   WindLineFrame,
   WindLineOptions,
   WindLineStats,

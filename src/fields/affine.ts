@@ -1,5 +1,5 @@
 import { Matrix3, Vector3 } from 'three'
-import { copyMatrix3, copyVec3, finite } from '../internal/math.js'
+import { copyFiniteVec3, copyMatrix3 } from '../internal/math.js'
 import type {
   Matrix3Like,
   Vec3Like,
@@ -27,12 +27,14 @@ export class AffineWindField implements WindField {
   }
 
   configure(options: AffineWindFieldOptions): this {
-    if (options.origin !== undefined) copyVec3(this.origin, options.origin)
-    if (options.velocity !== undefined) copyVec3(this.velocity, options.velocity)
+    if (options.origin !== undefined) copyFiniteVec3(this.origin, options.origin, 'origin')
+    if (options.velocity !== undefined) {
+      copyFiniteVec3(this.velocity, options.velocity, 'velocity')
+    }
     if (options.jacobian !== undefined) copyMatrix3(this.jacobian, options.jacobian)
     if (options.turbulence !== undefined) {
-      const turbulence = finite(options.turbulence, Number.NaN)
-      if (!Number.isFinite(turbulence) || turbulence < 0) {
+      const turbulence = options.turbulence
+      if (typeof turbulence !== 'number' || !Number.isFinite(turbulence) || turbulence < 0) {
         throw new RangeError('turbulence must be a finite number >= 0')
       }
       this.turbulence = turbulence

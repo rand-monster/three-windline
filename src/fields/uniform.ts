@@ -1,5 +1,5 @@
 import { Matrix3, Vector3 } from 'three'
-import { copyVec3 } from '../internal/math.js'
+import { copyFiniteVec3 } from '../internal/math.js'
 import type { Vec3Like, WindField, WindSampleTarget } from '../types.js'
 
 export class UniformWindField implements WindField {
@@ -10,7 +10,7 @@ export class UniformWindField implements WindField {
   }
 
   setVelocity(velocity: Vec3Like): this {
-    copyVec3(this.velocity, velocity)
+    copyFiniteVec3(this.velocity, velocity, 'velocity')
     return this
   }
 

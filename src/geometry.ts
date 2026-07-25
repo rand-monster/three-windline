@@ -13,19 +13,16 @@ export function createWindLineGeometry(
   segments: number,
   count: number,
   seedData: WindLineSeedData,
+  closed = false,
 ): InstancedBufferGeometry {
   const positions = new Float32Array((segments + 1) * 2 * 3)
   const uvs = new Float32Array((segments + 1) * 2 * 2)
-  const indices = segments * 6 > 65_535
-    ? new Uint32Array(segments * 6)
-    : new Uint16Array(segments * 6)
+  const indices = new Uint16Array(segments * 6)
   for (let index = 0; index <= segments; index += 1) {
     const phase = index / segments
-    const taper = phase < TAPER_FRACTION
-      ? phase / TAPER_FRACTION
-      : phase > 1 - TAPER_FRACTION
-        ? (1 - phase) / TAPER_FRACTION
-        : 1
+    const taper = closed
+      ? 1
+      : Math.min(1, phase / TAPER_FRACTION, (1 - phase) / TAPER_FRACTION)
     const positionOffset = index * 6
     positions[positionOffset] = 0
     positions[positionOffset + 1] = 0.5 * taper
@@ -54,9 +51,8 @@ export function createWindLineGeometry(
   geometry.setAttribute('position', new Float32BufferAttribute(positions, 3))
   geometry.setAttribute('uv', new Float32BufferAttribute(uvs, 2))
   geometry.setAttribute('aWindSeed', new InstancedBufferAttribute(seedData.positions, 4))
-  geometry.setAttribute('aWindTrait', new InstancedBufferAttribute(seedData.traits, 4))
+  geometry.setAttribute('aWindTrait', new InstancedBufferAttribute(seedData.traits, 4, true))
   geometry.setIndex(new BufferAttribute(indices, 1))
   geometry.instanceCount = count
-  geometry.boundingSphere = null
   return geometry
 }

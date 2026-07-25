@@ -19,12 +19,12 @@ export function tslHashFixture(value: number, seed = 0): number {
 
 export interface WindLineSeedData {
   readonly positions: Float32Array
-  readonly traits: Float32Array
+  readonly traits: Uint8Array
 }
 
 export function createWindLineSeedData(capacity: number, seed = 0): WindLineSeedData {
   const positions = new Float32Array(capacity * 4)
-  const traits = new Float32Array(capacity * 4)
+  const traits = new Uint8Array(capacity * 4)
   const resolvedSeed = seed >>> 0
   for (let index = 0; index < capacity; index += 1) {
     const positionOffset = index * 4
@@ -37,10 +37,10 @@ export function createWindLineSeedData(capacity: number, seed = 0): WindLineSeed
       hashU32ToUnit((slot + 0x967a_889b + resolvedSeed) >>> 0) * 2 - 1
     )
     positions[positionOffset + 3] = hashU32ToUnit((slot + 0x51a1_f10d + resolvedSeed) >>> 0)
-    traits[positionOffset] = tslHashFixture(index * 0.017 + 1.2, resolvedSeed)
-    traits[positionOffset + 1] = tslHashFixture(index * 0.031 + 4.7, resolvedSeed)
-    traits[positionOffset + 2] = tslHashFixture(index * 0.047 + 8.9, resolvedSeed)
-    traits[positionOffset + 3] = tslHashFixture(index * 0.061 + 12.4, resolvedSeed)
+    traits[positionOffset] = pcgHashU32(slot ^ resolvedSeed ^ 0xa511_e9b3) >>> 24
+    traits[positionOffset + 1] = pcgHashU32(slot ^ resolvedSeed ^ 0x63d8_35a7) >>> 24
+    traits[positionOffset + 2] = pcgHashU32(slot ^ resolvedSeed ^ 0x9e37_79b9) >>> 24
+    traits[positionOffset + 3] = pcgHashU32(slot ^ resolvedSeed ^ 0xc2b2_ae35) >>> 24
   }
   return { positions, traits }
 }

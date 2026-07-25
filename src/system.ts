@@ -8,9 +8,8 @@ import {
 import {
   resolveWindLineOptions,
   resolveWindLineStyle,
-  type ResolvedWindLineOptions,
 } from './defaults.js'
-import { UniformWindField, createWindSampleTarget } from './fields/uniform.js'
+import { UniformWindField } from './fields/uniform.js'
 import { createWindLineGeometry } from './geometry.js'
 import {
   applyWindLineStyle,
@@ -32,11 +31,12 @@ import type {
   WindLineStyle,
   WindLineStyleInput,
   WindLineSystem,
+  WindSampleTarget,
 } from './types.js'
 
-export class ThreeWindLineSystem implements WindLineSystem {
+class WindLineSystemImpl implements WindLineSystem {
   readonly mesh
-  readonly object3d
+  readonly curve
   readonly capacity
 
   #count: number
@@ -51,39 +51,43 @@ export class ThreeWindLineSystem implements WindLineSystem {
 
   readonly #segments: number
   readonly #seedBytes: number
-  readonly #sample = createWindSampleTarget()
-  readonly #center = new Vector3()
-  readonly #eye = new Vector3()
-  readonly #forward = new Vector3(0, 0, 1)
-  readonly #observerVelocity = new Vector3()
-  readonly #safeJacobian = new Matrix3().set(0, 0, 0, 0, 0, 0, 0, 0, 0)
+  readonly #sample: WindSampleTarget
   readonly #uniforms
 
   constructor(options: WindLineOptions = {}) {
     const resolved = resolveWindLineOptions(options)
     this.capacity = resolved.capacity
+    this.curve = resolved.curve
     this.#count = resolved.count
     this.#segments = resolved.segments
-    this.#field = resolved.field ?? new UniformWindField()
+    this.#field = validateField(resolved.field ?? new UniformWindField())
     this.#style = resolved.style
 
     const seeds = createWindLineSeedData(resolved.capacity, resolved.seed)
     this.#seedBytes = seeds.positions.byteLength + seeds.traits.byteLength
-    const geometry = createWindLineGeometry(resolved.segments, resolved.count, seeds)
+    const geometry = createWindLineGeometry(
+      resolved.segments,
+      resolved.count,
+      seeds,
+      resolved.curve === 'ring',
+    )
     const bundle = createWindLineMaterial(
       resolved.style,
+      resolved.curve,
       resolved.depthTest,
       resolved.blending,
     )
     this.#uniforms = bundle.uniforms
+    this.#sample = {
+      velocity: bundle.uniforms.fieldVelocity.value,
+      jacobian: bundle.uniforms.jacobian.value,
+      turbulence: 0,
+    }
     this.mesh = new Mesh(geometry, bundle.material)
     this.mesh.name = resolved.name
     this.mesh.frustumCulled = false
     this.mesh.renderOrder = resolved.renderOrder
-    this.mesh.castShadow = false
-    this.mesh.receiveShadow = false
     this.mesh.visible = false
-    this.object3d = this.mesh
     resolved.scene?.add(this.mesh)
   }
 
@@ -103,10 +107,7 @@ export class ThreeWindLineSystem implements WindLineSystem {
 
   setField(field: WindField): void {
     this.#assertAlive()
-    if (!field || typeof field.sample !== 'function') {
-      throw new TypeError('field must implement sample(position, timeSeconds, out)')
-    }
-    this.#field = field
+    this.#field = validateField(field)
   }
 
   setStyle(input: WindLineStyleInput): void {
@@ -121,22 +122,27 @@ export class ThreeWindLineSystem implements WindLineSystem {
 
     const time = finite(frame.timeSeconds, 0)
     const delta = clamp(finite(frame.deltaSeconds, 0), 0, 0.25)
-    copyVec3(this.#center, frame.anchor)
-    copyVec3(this.#observerVelocity, frame.observerVelocity)
-    frame.camera.getWorldPosition(this.#eye)
-    if (frame.forward !== undefined) copyVec3(this.#forward, frame.forward)
-    else frame.camera.getWorldDirection(this.#forward)
-    this.#forward.y = 0
-    if (this.#forward.lengthSq() < 1e-8) this.#forward.set(0, 0, 1)
-    else this.#forward.normalize()
+    const center = this.#uniforms.center.value
+    const eye = this.#uniforms.eye.value
+    const forward = this.#uniforms.forward.value
+    const observerVelocity = this.#uniforms.observerVelocity.value
+    const jacobian = this.#uniforms.jacobian.value
+    copyVec3(center, frame.anchor)
+    copyVec3(observerVelocity, frame.observerVelocity)
+    frame.camera.getWorldPosition(eye)
+    if (frame.forward !== undefined) copyVec3(forward, frame.forward)
+    else frame.camera.getWorldDirection(forward)
+    forward.y = 0
+    if (forward.lengthSq() < 1e-8) forward.set(0, 0, 1)
+    else forward.normalize()
 
-    this.#field.sample(this.#center, time, this.#sample)
+    this.#field.sample(center, time, this.#sample)
     sanitizeVector(this.#sample.velocity)
-    sanitizeMatrix(this.#sample.jacobian, this.#safeJacobian)
+    sanitizeMatrix(this.#sample.jacobian, jacobian)
     this.#sampledSpeed = this.#sample.velocity.length()
     this.#sampledTurbulence = Math.max(0, finite(this.#sample.turbulence, 0))
 
-    const gradientEnergy = matrixMagnitude(this.#safeJacobian)
+    const gradientEnergy = matrixMagnitude(jacobian)
       * Math.min(this.#style.regionRadius, 20)
       * 0.25
     const signal = this.#sampledSpeed + gradientEnergy + this.#sampledTurbulence * 0.25
@@ -157,18 +163,8 @@ export class ThreeWindLineSystem implements WindLineSystem {
         1 - Math.exp(-response * delta),
       )
 
-    const elements = this.#safeJacobian.elements
-    this.#uniforms.time.value = time
-    this.#uniforms.center.value.copy(this.#center)
-    this.#uniforms.eye.value.copy(this.#eye)
-    this.#uniforms.forward.value.copy(this.#forward)
-    this.#uniforms.observerVelocity.value.copy(this.#observerVelocity)
-    this.#uniforms.fieldVelocity.value.copy(this.#sample.velocity)
-    this.#uniforms.jacobianX.value.set(elements[0], elements[1], elements[2])
-    this.#uniforms.jacobianY.value.set(elements[3], elements[4], elements[5])
-    this.#uniforms.jacobianZ.value.set(elements[6], elements[7], elements[8])
-    this.#uniforms.turbulence.value = this.#sampledTurbulence
-    this.#uniforms.visibility.value = this.#visibility
+    const frameState = this.#uniforms.frame.value
+    frameState.set(time, this.#sampledTurbulence, this.#visibility, frameState.w)
 
     this.mesh.visible = this.#count > 0 && this.#visibility > 0.002
     this.#initialized = true
@@ -180,7 +176,7 @@ export class ThreeWindLineSystem implements WindLineSystem {
     out.capacity = this.capacity
     out.count = this.#count
     out.segments = this.#segments
-    out.drawCalls = this.#count > 0 ? 1 : 0
+    out.drawCalls = this.mesh.visible && !this.#disposed ? 1 : 0
     out.triangles = this.#count * this.#segments * 2
     out.seedBytes = this.#seedBytes
     out.updates = this.#updates
@@ -208,8 +204,15 @@ export class ThreeWindLineSystem implements WindLineSystem {
   }
 }
 
-export function createWindLineSystem(options: WindLineOptions = {}): ThreeWindLineSystem {
-  return new ThreeWindLineSystem(options)
+export function createWindLineSystem(options: WindLineOptions = {}): WindLineSystem {
+  return new WindLineSystemImpl(options)
+}
+
+function validateField(field: WindField): WindField {
+  if (!field || typeof field.sample !== 'function') {
+    throw new TypeError('field must implement sample(position, timeSeconds, out)')
+  }
+  return field
 }
 
 function sanitizeVector(vector: Vector3): void {

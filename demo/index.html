@@ -22,7 +22,7 @@
         <a class="brand" href="/" aria-label="three-windline home">
           <span class="brand-mark"></span>
           <span class="brand-name">three-windline</span>
-          <span class="brand-version">v0.1</span>
+          <span class="brand-version">v0.2</span>
         </a>
 
         <div class="preset-switcher" role="group" aria-label="Wind field preset">
@@ -93,40 +93,95 @@
         <div class="settings-scroll">
           <section class="settings-section" aria-labelledby="flowSettingsTitle">
             <h2 id="flowSettingsTitle">Flow</h2>
-            <label class="range-control">
-              <span>Density</span>
+            <div class="range-control">
+              <label for="densitySlider">Density</label>
               <output id="densityValue" for="densitySlider">160</output>
               <input id="densitySlider" type="range" min="24" max="480" step="8" value="160" />
-            </label>
-            <label class="range-control">
-              <span>Speed</span>
+            </div>
+            <div class="range-control">
+              <label for="speedSlider">Speed</label>
               <output id="speedValue" for="speedSlider">1.00×</output>
               <input id="speedSlider" type="range" min="0.25" max="2.5" step="0.05" value="1" />
-            </label>
-            <label class="range-control">
-              <span>Gust</span>
+            </div>
+            <div class="range-control">
+              <label for="gustSlider">Gust</label>
               <output id="gustValue" for="gustSlider">5.5 m/s</output>
               <input id="gustSlider" type="range" min="0" max="20" step="0.5" value="5.5" />
-            </label>
+            </div>
           </section>
 
           <section class="settings-section" aria-labelledby="ribbonSettingsTitle">
             <h2 id="ribbonSettingsTitle">Ribbon</h2>
-            <label class="range-control">
-              <span>Length</span>
+            <div class="range-control">
+              <label for="lengthSlider">Length</label>
               <output id="lengthValue" for="lengthSlider">18.0 m</output>
               <input id="lengthSlider" type="range" min="6" max="42" step="0.5" value="18" />
-            </label>
-            <label class="range-control">
-              <span>Width</span>
+            </div>
+            <div class="range-control">
+              <label for="widthSlider">Width</label>
               <output id="widthValue" for="widthSlider">1.4 px</output>
               <input id="widthSlider" type="range" min="0.6" max="3.4" step="0.1" value="1.4" />
-            </label>
-            <label class="range-control">
-              <span>Opacity</span>
+            </div>
+            <div class="range-control">
+              <label for="opacitySlider">Opacity</label>
               <output id="opacityValue" for="opacitySlider">34%</output>
               <input id="opacitySlider" type="range" min="0.08" max="0.72" step="0.01" value="0.34" />
+            </div>
+          </section>
+
+          <section class="settings-section" aria-labelledby="curveSettingsTitle">
+            <h2 id="curveSettingsTitle">Curve program</h2>
+            <label class="select-control">
+              <span>Family</span>
+              <select id="curveSelect">
+                <option value="flow">Flow</option>
+                <option value="straight">Straight</option>
+                <option value="arc">Arc</option>
+                <option value="ring">Ring</option>
+                <option value="helix">Helix</option>
+                <option value="spiral">Spiral</option>
+              </select>
             </label>
+            <div class="range-control">
+              <label for="curveSweepSlider">Arc sweep</label>
+              <output id="curveSweepValue" for="curveSweepSlider">180°</output>
+              <input
+                id="curveSweepSlider"
+                type="range"
+                min="20"
+                max="360"
+                step="1"
+                value="180"
+              />
+            </div>
+            <div class="range-control">
+              <label for="curveTurnsSlider">Turns</label>
+              <output id="curveTurnsValue" for="curveTurnsSlider">1.50</output>
+              <input
+                id="curveTurnsSlider"
+                type="range"
+                min="0.25"
+                max="6"
+                step="0.05"
+                value="1.5"
+              />
+            </div>
+          </section>
+
+          <section class="settings-section" aria-labelledby="colorSettingsTitle">
+            <h2 id="colorSettingsTitle">Color</h2>
+            <div class="range-control">
+              <label for="colorRandomnessSlider">Instance random</label>
+              <output id="colorRandomnessValue" for="colorRandomnessSlider">18%</output>
+              <input
+                id="colorRandomnessSlider"
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value="0.18"
+              />
+            </div>
           </section>
         </div>
       </aside>

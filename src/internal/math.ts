@@ -27,15 +27,50 @@ export function copyVec3(target: Vector3, value: Vec3Like | undefined): Vector3 
   )
 }
 
+export function copyFiniteVec3(
+  target: Vector3,
+  value: Vec3Like,
+  name: string,
+): Vector3 {
+  const source = value as {
+    readonly x?: unknown
+    readonly y?: unknown
+    readonly z?: unknown
+  } & ArrayLike<unknown>
+  const x = source.x ?? source[0]
+  const y = source.y ?? source[1]
+  const z = source.z ?? source[2]
+  if (
+    typeof x !== 'number'
+    || typeof y !== 'number'
+    || typeof z !== 'number'
+    || !Number.isFinite(x)
+    || !Number.isFinite(y)
+    || !Number.isFinite(z)
+  ) {
+    throw new RangeError(`${name} must contain three finite numbers`)
+  }
+  return target.set(x, y, z)
+}
+
 export function copyMatrix3(target: Matrix3, value: Matrix3Like | undefined): Matrix3 {
   if (!value) return target.identity()
-  if ('isMatrix3' in value && value.isMatrix3) return target.copy(value)
+  if ('isMatrix3' in value && value.isMatrix3) {
+    if (!value.elements.every(Number.isFinite)) {
+      throw new RangeError('jacobian must contain nine finite numbers')
+    }
+    return target.copy(value)
+  }
   const source = value as ArrayLike<number>
-  return target.fromArray([
-    finite(source[0]), finite(source[1]), finite(source[2]),
-    finite(source[3]), finite(source[4]), finite(source[5]),
-    finite(source[6]), finite(source[7]), finite(source[8]),
-  ])
+  if (source.length !== 9) {
+    throw new RangeError('jacobian must contain exactly nine finite numbers')
+  }
+  for (let index = 0; index < 9; index += 1) {
+    if (!Number.isFinite(source[index])) {
+      throw new RangeError('jacobian must contain exactly nine finite numbers')
+    }
+  }
+  return target.fromArray(source)
 }
 
 export function matrixMagnitude(matrix: Matrix3): number {

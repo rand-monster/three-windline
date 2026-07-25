@@ -393,15 +393,15 @@ function createVortexGuide(): {
   const material = new THREE.MeshBasicMaterial({
     color: 0xf1d8b0,
     transparent: true,
-    opacity: 0.22,
+    opacity: 0.16,
     depthWrite: false,
     side: THREE.DoubleSide,
   })
   const rings: THREE.Mesh[] = []
-  for (let index = 0; index < 7; index += 1) {
-    const phase = index / 6
+  for (let index = 0; index < 6; index += 1) {
+    const phase = index / 5
     const radius = THREE.MathUtils.lerp(1.7, 6.8, phase)
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.045, 6, 96), material.clone())
+    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.035, 6, 96), material.clone())
     ring.position.y = phase * 14
     ring.rotation.x = Math.PI * 0.5 + Math.sin(index * 2.1) * 0.06
     ring.rotation.y = index * 0.38
@@ -409,7 +409,7 @@ function createVortexGuide(): {
     group.add(ring)
   }
 
-  const count = 280
+  const count = 180
   const points = new Float32Array(count * 3)
   const random = mulberry32(0x70ad_51f1)
   for (let index = 0; index < count; index += 1) {
@@ -428,7 +428,7 @@ function createVortexGuide(): {
     size: 0.2,
     sizeAttenuation: true,
     transparent: true,
-    opacity: 0.36,
+    opacity: 0.28,
     depthWrite: false,
   })
   const dust = new THREE.Points(geometry, dustMaterial)
@@ -513,6 +513,7 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   function setPreset(preset: DemoPresetId): void {
     currentPreset = preset
     vortex.group.visible = preset === 'tornado'
+    sculpture.group.visible = preset !== 'tornado'
     if (preset === 'storm') {
       targetBackground.set(0x526f78)
       targetFog.set(0x657d7c)

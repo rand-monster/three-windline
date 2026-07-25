@@ -1,12 +1,13 @@
 import type {
   Camera,
   ColorRepresentation,
+  InstancedBufferGeometry,
   Matrix3,
   Mesh,
-  Object3D,
   Scene,
   Vector3,
 } from 'three'
+import type { MeshBasicNodeMaterial } from 'three/webgpu'
 
 export type Vec3Like =
   | { readonly x: number; readonly y: number; readonly z: number }
@@ -24,6 +25,17 @@ export interface WindField {
   sample(position: Vector3, timeSeconds: number, out: WindSampleTarget): void
 }
 
+export const WIND_LINE_CURVES = Object.freeze([
+  'flow',
+  'straight',
+  'arc',
+  'ring',
+  'helix',
+  'spiral',
+] as const)
+
+export type WindLineCurve = (typeof WIND_LINE_CURVES)[number]
+
 export interface WindLineStyle {
   regionRadius: number
   verticalHalfSpan: number
@@ -32,9 +44,12 @@ export interface WindLineStyle {
   length: number
   widthCssPixels: readonly [number, number]
   colors: readonly [ColorRepresentation, ColorRepresentation]
+  colorRandomness: number
   opacity: number
   curveAmplitude: readonly [number, number]
   curveFrequency: readonly [number, number]
+  curveSweepRadians: number
+  curveTurns: number
   nearFade: readonly [number, number]
   farFade: readonly [number, number]
   lifetime: readonly [number, number]
@@ -53,6 +68,7 @@ export interface WindLineOptions {
   count?: number
   segments?: number
   seed?: number
+  curve?: WindLineCurve
   style?: WindLineStyleInput
   renderOrder?: number
   depthTest?: boolean
@@ -88,8 +104,8 @@ export interface WindLineStats {
 }
 
 export interface WindLineSystem {
-  readonly object3d: Object3D
-  readonly mesh: Mesh
+  readonly mesh: Mesh<InstancedBufferGeometry, MeshBasicNodeMaterial>
+  readonly curve: WindLineCurve
   readonly capacity: number
   readonly count: number
   setCount(count: number): void

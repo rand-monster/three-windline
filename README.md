@@ -14,6 +14,8 @@ per wind-line system.
 > this repository does not claim that an npm release is available yet. Use a
 > local checkout until the first registry release is announced.
 
+The package is ESM-only. It does not expose a CommonJS `require()` entry.
+
 ## What It Provides
 
 - One GPU draw for up to 4,096 deterministic ribbons.
@@ -22,6 +24,8 @@ per wind-line system.
   near/far fades.
 - Static per-instance seed buffers. Runtime updates change uniforms, not
   instance data.
+- Compile-specialized `flow`, `straight`, `arc`, `ring`, `helix`, and `spiral`
+  curve programs.
 - Uniform, affine/shear, coherent gust, and softened vortex wind fields.
 - Runtime density, field, and style changes without rebuilding geometry.
 - An allocation-free field-sampling contract for custom simulation sources.
@@ -88,6 +92,7 @@ const field = new CoherentWindField({
 const wind = createWindLineSystem({
   scene,
   field,
+  curve: 'flow',
   capacity: 128,
   count: 96,
   seed: 42,
@@ -121,6 +126,42 @@ addEventListener('resize', () => {
 Keep `anchor` close to the player, vehicle, or camera focus. The deterministic
 ribbon lattice wraps around this point, so the effect can cover a moving world
 without streaming new instance data.
+
+## Curve Programs
+
+Choose the centerline function when constructing a system:
+
+```ts
+const rings = createWindLineSystem({
+  scene,
+  field,
+  curve: 'ring',
+  style: {
+    length: 18,
+    widthCssPixels: [1, 2],
+  },
+})
+```
+
+| Curve | Centerline |
+| --- | --- |
+| `flow` | Field streamline plus the authored horizontal/vertical wave. |
+| `straight` | Field streamline only; no authored oscillation. |
+| `arc` | Circular arc controlled by `curveSweepRadians`; the default is a semicircle. |
+| `ring` | A closed `2π` circle whose radius is `length / 2π`. |
+| `helix` | A head-anchored elliptical orbit controlled by `curveAmplitude` and `curveTurns`. |
+| `spiral` | A helix whose radius grows from the head toward the tail. |
+
+The curve is a construction-time shader program, not a per-frame branch.
+A fixed `straight` system therefore does not compile or execute ring/helix
+math. Numeric shape parameters remain uniforms and can be changed with
+`setStyle()`. Recreate the system to change its curve program; this is an
+intentional pipeline change, not a frame-time control.
+
+Every curve is composed with the sampled field and its local Jacobian. The
+field moves and bends the centerline; the curve program defines the ribbon's
+intrinsic shape. Instance phase and handedness come from deterministic,
+independent PCG lanes.
 
 ## Built-In Fields
 
@@ -195,21 +236,15 @@ so runtime tuning can be chained.
 
 ## Runtime API
 
-Create a system with either:
-
-```ts
-const wind = createWindLineSystem(options)
-const sameShape = new ThreeWindLineSystem(options)
-```
-
-`createWindLineSystem()` is the preferred public entry point.
+Create a system with `createWindLineSystem(options)`. The factory is the only
+construction surface, so implementation details remain free to evolve.
 
 Each system exposes:
 
 | Member | Meaning |
 | --- | --- |
-| `object3d` | The object to add to or remove from a Three.js scene. |
 | `mesh` | The generated `Mesh` for render-order or layer integration. |
+| `curve` | Read-only compile-specialized curve program. |
 | `capacity` | Read-only static instance capacity. |
 | `count` | Read-only active instance count. |
 | `setCount(count)` | Changes the draw range without reallocating seed buffers. |
@@ -223,20 +258,38 @@ Each system exposes:
 
 | Option | Default | Notes |
 | --- | --- | --- |
-| `scene` | none | Adds the mesh immediately when provided. Otherwise add `object3d` yourself. |
+| `scene` | none | Adds the mesh immediately when provided. Otherwise add `mesh` yourself. |
 | `field` | `UniformWindField([5, 0, 1])` | Any object implementing `WindField`. |
 | `capacity` | `96` | Fixed allocation, from 1 to 4,096 lines. |
 | `count` | `min(42, capacity)` | Active instances, from 0 to `capacity`. |
 | `segments` | `28` | Ribbon segments, from 4 to 128. |
 | `seed` | `0` | Unsigned 32-bit deterministic seed. |
+| `curve` | `"flow"` | Compile-specialized centerline program. |
 | `style` | package defaults | Partial `WindLineStyle`. |
 | `renderOrder` | `3` | Assigned to the generated mesh. |
 | `depthTest` | `true` | Depth testing for the transparent material. |
 | `blending` | `"normal"` | `"normal"` or `"additive"`. |
 | `name` | `"three-windline-field"` | Generated mesh name. |
 
-Capacity and segment count define static geometry and must be chosen at
-construction. `setCount()` only changes the instanced draw range.
+Capacity, segment count, and curve program define static GPU resources and must
+be chosen at construction. `setCount()` only changes the instanced draw range.
+
+### Migrating From 0.1
+
+Version 0.2 narrows construction to one public path:
+
+```ts
+// 0.1
+const wind = new ThreeWindLineSystem(options)
+scene.add(wind.object3d)
+
+// 0.2
+const wind = createWindLineSystem(options)
+scene.add(wind.mesh)
+```
+
+`ThreeWindLineSystem` is now private implementation detail, and the duplicate
+`object3d` alias was removed. Use `createWindLineSystem()` and `mesh`.
 
 ### Per-Frame Update
 
@@ -276,9 +329,10 @@ wind.setStyle({
   widthCssPixels: [1.1, 2.2],
   opacity: 0.46,
   colors: ['#fff1cf', '#a9fff1'],
+  colorRandomness: 0.5,
 })
 
-scene.remove(wind.object3d) // optional; dispose() also removes it
+scene.remove(wind.mesh) // optional; dispose() also removes it
 wind.dispose()
 ```
 
@@ -296,9 +350,12 @@ mutators throw after disposal.
 | `length` | `15.5` | World-space ribbon length. |
 | `widthCssPixels` | `[0.9, 1.7]` | Deterministic per-line width range in CSS pixels. |
 | `colors` | `[#fff7e8, #b8fff4]` | Per-line color endpoints. |
+| `colorRandomness` | `0.32` | Stable seed-based random color mixed independently per instance. |
 | `opacity` | `0.38` | Global opacity multiplier. |
-| `curveAmplitude` | `[2.4, 1.1]` | Horizontal and vertical bend amplitudes. |
-| `curveFrequency` | `[0.19, 0.13]` | Horizontal and vertical bend frequencies. |
+| `curveAmplitude` | `[2.4, 1.1]` | Horizontal/vertical wave or orbit radii, depending on the curve. |
+| `curveFrequency` | `[0.19, 0.13]` | Horizontal/vertical frequencies used by `flow`. |
+| `curveSweepRadians` | `π` | Sweep used by `arc`; `ring` always uses `2π`. |
+| `curveTurns` | `1.5` | Turns used by `helix` and `spiral`. |
 | `nearFade` | `[1.8, 5.5]` | Camera-distance fade-in range. |
 | `farFade` | `[120, 190]` | Camera-distance fade-out range. |
 | `lifetime` | `[2.6, 6]` | Deterministic line lifetime range in seconds. |
@@ -318,7 +375,7 @@ visible state:
 
 - `drawCalls` is `1`.
 - `triangles` is `count * segments * 2`.
-- `seedBytes` is `capacity * 32`.
+- `seedBytes` is `capacity * 20`.
 - `dynamicInstanceUploads` is `0`.
 
 ## Custom Wind Fields
@@ -354,17 +411,20 @@ The system samples the field once at the frame anchor. The shader applies that
 local affine approximation to every ribbon origin. This is why a nonlinear
 field such as a vortex should provide a useful local Jacobian.
 
-Keep `sample()` allocation-free. Built-in nonlinear fields reuse scratch
-vectors and estimate their Jacobians without creating per-frame objects.
+Keep `sample()` allocation-free. The built-in nonlinear fields evaluate
+velocity and an analytic Jacobian together, without finite-difference resampling
+or per-frame objects.
 
 ## Rendering And Performance
 
 This package intentionally does **not** use a compute shader:
 
-1. Construction uploads two static `vec4` seed attributes per capacity slot.
+1. Construction uploads one float `vec4` seed and one normalized byte `vec4`
+   trait per capacity slot.
 2. Each frame samples the wind field once on the CPU.
 3. The frame updates a small set of material uniforms.
-4. TSL vertex logic wraps, advects, bends, and billboards every ribbon.
+4. A curve-specialized TSL vertex graph wraps, advects, shapes, and billboards
+   every ribbon. Fragment work is limited to edge coverage and compositing.
 5. One `InstancedBufferGeometry` draw emits the complete field.
 
 For this analytic effect, a compute pass would add dispatch and synchronization
@@ -377,7 +437,8 @@ Practical tuning order:
 1. Reduce `count` for direct vertex-cost savings.
 2. Reduce `segments` if long curves remain visually smooth.
 3. Keep `capacity` close to the largest count needed by the scene.
-4. Prefer `setCount()` and `setStyle()` over rebuilding systems.
+4. Prefer `setCount()` and `setStyle()` over rebuilding systems; rebuild only
+   when selecting a different curve program.
 5. Reuse frame vectors and field objects.
 
 The generated mesh disables Three.js frustum culling because its vertices are

@@ -13,7 +13,6 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import { bloom } from 'three/addons/tsl/display/BloomNode.js'
 import { pass } from 'three/tsl'
 import {
-  CoherentWindField,
   UniformWindField,
   VortexWindField,
   WIND_LINE_CURVES,
@@ -28,6 +27,7 @@ import {
   DEMO_VORTEX_ENVELOPE,
   createDemoWorld,
   isVortexPreset,
+  usesVortexField,
   type DemoPresetId,
   type DemoVortexLook,
 } from './world.js'
@@ -89,6 +89,7 @@ interface DemoSnapshot {
   readonly backend: string
   readonly fps: number
   readonly draws: number
+  readonly passes: number
   readonly controls: Readonly<DemoControls>
   readonly bloom: Readonly<DemoBloomLook>
   readonly vortex: Readonly<DemoVortexLook>
@@ -207,7 +208,7 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
       curveSweep: 180,
       curveTurns: 0.9,
     },
-    colors: [0xffffff, 0x0080ff],
+    colors: [0xffffff, 0x6ddcff],
     colorBanding: 1,
     curveAmplitude: [0.28, 0.1],
     regionRadius: 9.2,
@@ -217,7 +218,7 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     speedRange: [4, 17],
     fieldSpeedMultiplier: 1.05,
     vortexSurface: {
-      colors: [0xffffff, 0x0068d8],
+      colors: [0xf4feff, 0x35b9dc],
       roughness: 0.14,
       specular: 0.6,
       rim: 0.45,
@@ -262,29 +263,37 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
   storm: {
     id: 'storm',
     index: '05',
-    label: 'Storm Front',
-    fieldLabel: 'coherent',
-    metric: '17.5 m/s',
-    curve: 'flow',
+    label: 'Hurricane',
+    fieldLabel: 'vortex · supercell',
+    metric: '40.50 rad/s',
+    curve: 'straight',
     controls: {
-      density: 480,
-      speed: 1.55,
-      gust: 16,
-      length: 34,
-      width: 2.2,
-      opacity: 0.68,
-      colorRandomness: 0.3,
+      density: 640,
+      speed: 1.35,
+      gust: 18,
+      length: 16,
+      width: 4.2,
+      opacity: 0.5,
+      colorRandomness: 0,
       curveSweep: 180,
-      curveTurns: 1.5,
+      curveTurns: 0.8,
     },
-    colors: [0xffd49d, 0xc0f3ff],
-    curveAmplitude: [4.1, 1.8],
-    regionRadius: 66,
+    colors: [0xf2fdff, 0x82d4e6],
+    colorBanding: 0.4,
+    curveAmplitude: [0.42, 0.18],
+    regionRadius: 18.6,
     verticalHalfSpan: 23,
-    centerLift: 13,
-    lifetime: [1.4, 4.2],
-    speedRange: [5, 34],
-    fieldSpeedMultiplier: 1.75,
+    centerLift: 0,
+    lifetime: [2.4, 5.2],
+    speedRange: [5, 23],
+    fieldSpeedMultiplier: 1.15,
+    vortexSurface: {
+      colors: [0x142b35, 0x7899a5],
+      roughness: 0.84,
+      specular: 0.16,
+      rim: 0.46,
+      emission: 0.06,
+    },
   },
 })
 
@@ -314,18 +323,19 @@ const BLOOM_LOOKS: Readonly<Record<DemoPresetId, DemoBloomLook>> = Object.freeze
     exposure: 0.88,
   }),
   storm: Object.freeze({
-    strength: 0.16,
-    radius: 0.2,
-    threshold: 1.12,
-    exposure: 0.98,
+    strength: 0.34,
+    radius: 0.35,
+    threshold: 0.9,
+    exposure: 0.9,
   }),
 })
 
 const DEFAULT_CAMERA_POSITION = new THREE.Vector3(35, 22, 48)
 const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 7.2, 8)
+const HURRICANE_CAMERA_OFFSET = new THREE.Vector3(58, 34, 72)
+const HURRICANE_CAMERA_TARGET_OFFSET = new THREE.Vector3(0, 22, 0)
 const OBSERVER_VELOCITY = new THREE.Vector3()
 const BREEZE_DIRECTION = new THREE.Vector3(0.95, 0.025, 0.31).normalize()
-const STORM_DIRECTION = new THREE.Vector3(0.78, -0.015, 0.63).normalize()
 const BREEZE_VELOCITY_SCRATCH = new THREE.Vector3()
 const sliderIds = [
   'density',
@@ -354,7 +364,15 @@ const DEFAULT_VORTEX_LOOK: DemoVortexLook = Object.freeze({
   axisWander: DEMO_VORTEX_ENVELOPE.axisWander,
   volume: 1,
 })
+const HURRICANE_VORTEX_LOOK: DemoVortexLook = Object.freeze({
+  height: 46,
+  topRadius: 18.6,
+  axisBend: 1.35,
+  axisWander: 3.4,
+  volume: 1.35,
+})
 const VORTEX_BODY_COUNT = 144
+const HURRICANE_BODY_COUNT = 208
 
 function requiredElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id)
@@ -474,6 +492,9 @@ async function start(): Promise<void> {
   controls.minPolarAngle = 0.22
   controls.maxPolarAngle = Math.PI * 0.48
   controls.update()
+  const cameraBeforeHurricane = camera.position.clone()
+  const targetBeforeHurricane = controls.target.clone()
+  let hasCameraBeforeHurricane = false
 
   const world = createDemoWorld(scene)
   const scenePass = pass(scene, camera)
@@ -496,8 +517,7 @@ async function start(): Promise<void> {
   const fields = {
     breeze: new UniformWindField(),
     tornado: new VortexWindField(),
-    storm: new CoherentWindField(),
-  } satisfies Record<'breeze' | 'tornado' | 'storm', WindField>
+  } satisfies Record<'breeze' | 'tornado', WindField>
   const vaneSample = createWindSampleTarget()
   const runtimeControls: DemoControls = { ...PRESETS.breeze.controls }
   const vortexLook = { ...DEFAULT_VORTEX_LOOK }
@@ -547,7 +567,7 @@ async function start(): Promise<void> {
     field: fields.tornado,
     curve: 'straight',
     ribbonMode: 'radial',
-    capacity: 160,
+    capacity: 224,
     count: 0,
     segments: 12,
     seed: 0x70ad_4ace,
@@ -595,8 +615,8 @@ async function start(): Promise<void> {
   let fps = 0
   let frameWindowStart = previousNow
   let frameWindowCount = 0
-  let renderCallsAtWindowStart = 0
   let draws = 0
+  let passes = 0
   let disposed = false
 
   const rendererBackend = renderer.backend as THREE.Backend & { isWebGPUBackend?: boolean }
@@ -629,7 +649,7 @@ async function start(): Promise<void> {
   }
 
   function syncCurveControls(): void {
-    curveSelect.disabled = isVortexPreset(activePreset)
+    curveSelect.disabled = usesVortexField(activePreset)
     sliders.curveSweep.disabled = activeCurve !== 'arc'
     sliders.curveTurns.disabled = activeCurve !== 'helix' && activeCurve !== 'spiral'
   }
@@ -641,15 +661,26 @@ async function start(): Promise<void> {
       fields.breeze.setVelocity(BREEZE_DIRECTION.clone().multiplyScalar(6.8 * speed))
       return fields.breeze
     }
-    if (isVortexPreset(preset)) {
+    if (usesVortexField(preset)) {
+      const isHurricane = preset === 'storm'
       fields.tornado.configure({
         center: world.vortexCenter,
-        baseVelocity: [0.12 * speed, 0, 0.04],
-        angularSpeed: 21.6 * speed + gust * 0.24,
-        radialInflow: 3 + gust * 0.09,
-        lift: 36 + gust * 0.72,
-        turbulence: 0.42 + gust * 0.022,
-        softeningRadius: 6,
+        baseVelocity: isHurricane
+          ? [0.42 * speed, 0, 0.16]
+          : [0.12 * speed, 0, 0.04],
+        angularSpeed: isHurricane
+          ? 26 * speed + gust * 0.3
+          : 21.6 * speed + gust * 0.24,
+        radialInflow: isHurricane
+          ? 5.4 + gust * 0.13
+          : 3 + gust * 0.09,
+        lift: isHurricane
+          ? 54 + gust * 0.9
+          : 36 + gust * 0.72,
+        turbulence: isHurricane
+          ? 0.72 + gust * 0.028
+          : 0.42 + gust * 0.022,
+        softeningRadius: isHurricane ? 9.5 : 6,
         envelope: {
           height: vortexLook.height,
           radius: [DEMO_VORTEX_ENVELOPE.radius[0], vortexLook.topRadius],
@@ -669,18 +700,13 @@ async function start(): Promise<void> {
       })
       return fields.tornado
     }
-    fields.storm.configure({
-      baseVelocity: STORM_DIRECTION.clone().multiplyScalar(9.8 * speed),
-      gustSpeed: gust,
-      turbulence: 0.65 + gust * 0.08,
-    })
-    return fields.storm
+    return fields.breeze
   }
 
   function applyVortexLook(): void {
     world.setVortexLook(vortexLook)
-    if (!isVortexPreset(activePreset)) return
-    activeField = configureField('tornado')
+    if (!usesVortexField(activePreset)) return
+    activeField = configureField(activePreset)
     windline.setField(activeField)
     vortexBody.setField(fields.tornado)
     applyVortexBodyStyle()
@@ -690,17 +716,25 @@ async function start(): Promise<void> {
     const volume = THREE.MathUtils.clamp(vortexLook.volume, 0, 1.5)
     const definition = PRESETS[activePreset]
     const surface = definition.vortexSurface
-    const enabled = isVortexPreset(activePreset) && surface !== undefined && volume > 0.01
-    vortexBody.setCount(enabled ? VORTEX_BODY_COUNT : 0)
+    const enabled = usesVortexField(activePreset) && surface !== undefined && volume > 0.01
+    const bodyCount = activePreset === 'storm'
+      ? HURRICANE_BODY_COUNT
+      : VORTEX_BODY_COUNT
+    vortexBody.setCount(enabled ? bodyCount : 0)
     if (!enabled || !surface) return
+    const presetWidthScale = activePreset === 'storm' ? 1.06 : 1
     const widthScale = THREE.MathUtils.lerp(0.3, 1, Math.min(volume, 1))
       * THREE.MathUtils.lerp(1, 1.18, Math.max(0, volume - 1) * 2)
+      * presetWidthScale
     vortexBody.setStyle({
       widthWorldUnits: [
         0.42 * widthScale,
         1.85 * widthScale,
       ],
-      opacity: THREE.MathUtils.clamp(0.72 + volume * 0.28, 0, 1),
+      opacity: Math.min(
+        THREE.MathUtils.clamp(0.72 + volume * 0.28, 0, 1),
+        activePreset === 'storm' ? 0.88 : 1,
+      ),
       colors: surface.colors,
       colorBanding: definition.colorBanding ?? 0,
       surfaceRoughness: surface.roughness,
@@ -769,10 +803,30 @@ async function start(): Promise<void> {
   function setPreset(preset: DemoPresetId, resetParameters = true): boolean {
     const definition = PRESETS[preset]
     if (!definition) return false
+    const previousPreset = activePreset
     activePreset = preset
     if (resetParameters) Object.assign(runtimeControls, definition.controls)
-    if (resetParameters && isVortexPreset(preset)) {
-      Object.assign(vortexLook, DEFAULT_VORTEX_LOOK)
+    if (resetParameters && usesVortexField(preset)) {
+      Object.assign(
+        vortexLook,
+        preset === 'storm' ? HURRICANE_VORTEX_LOOK : DEFAULT_VORTEX_LOOK,
+      )
+    }
+    if (resetParameters) {
+      if (preset === 'storm') {
+        if (previousPreset !== 'storm') {
+          cameraBeforeHurricane.copy(camera.position)
+          targetBeforeHurricane.copy(controls.target)
+          hasCameraBeforeHurricane = true
+        }
+        camera.position.copy(world.vortexCenter).add(HURRICANE_CAMERA_OFFSET)
+        controls.target.copy(world.vortexCenter).add(HURRICANE_CAMERA_TARGET_OFFSET)
+        controls.update()
+      } else if (previousPreset === 'storm' && hasCameraBeforeHurricane) {
+        camera.position.copy(cameraBeforeHurricane)
+        controls.target.copy(targetBeforeHurricane)
+        controls.update()
+      }
     }
     activeField = configureField(preset)
     replaceWindline(definition.curve, activeField)
@@ -786,10 +840,10 @@ async function start(): Promise<void> {
     renderer.toneMappingExposure = bloomLook.exposure
     world.setPreset(preset)
     world.setVortexLook(vortexLook)
-    if (isVortexPreset(preset)) vortexBody.setField(fields.tornado)
+    if (usesVortexField(preset)) vortexBody.setField(fields.tornado)
     applyVortexBodyStyle()
-    vortexSettings.hidden = !isVortexPreset(preset)
-    viewport.classList.toggle('is-vortex-targeting', isVortexPreset(preset))
+    vortexSettings.hidden = !usesVortexField(preset)
+    viewport.classList.toggle('is-vortex-targeting', usesVortexField(preset))
     for (const button of presetButtons) {
       const selected = button.dataset.preset === preset
       button.classList.toggle('is-active', selected)
@@ -802,6 +856,7 @@ async function start(): Promise<void> {
       twisterSelectShell.dataset.twister = preset
     } else {
       twisterSelect.value = ''
+      twisterSelectShell.dataset.twister = 'tornado'
     }
     curveSelect.value = activeCurve
     syncAllSliders()
@@ -821,7 +876,7 @@ async function start(): Promise<void> {
       if (id === 'speed' || id === 'gust') {
         activeField = configureField(activePreset)
         windline.setField(activeField)
-        if (isVortexPreset(activePreset)) vortexBody.setField(fields.tornado)
+        if (usesVortexField(activePreset)) vortexBody.setField(fields.tornado)
       }
       applyStyle(PRESETS[activePreset])
     }
@@ -865,6 +920,11 @@ async function start(): Promise<void> {
     camera.position.copy(DEFAULT_CAMERA_POSITION)
     controls.target.copy(DEFAULT_CAMERA_TARGET)
     controls.update()
+    if (activePreset === 'storm') {
+      cameraBeforeHurricane.copy(DEFAULT_CAMERA_POSITION)
+      targetBeforeHurricane.copy(DEFAULT_CAMERA_TARGET)
+      hasCameraBeforeHurricane = true
+    }
     setPaused(false)
     setPreset(activePreset, true)
   }
@@ -887,6 +947,7 @@ async function start(): Promise<void> {
       backend,
       fps,
       draws,
+      passes,
       controls: Object.freeze({ ...runtimeControls }),
       bloom: Object.freeze({
         strength: bloomPass.strength.value,
@@ -986,7 +1047,7 @@ async function start(): Promise<void> {
     targetPointerId = -1
     if (
       !isClick
-      || !isVortexPreset(activePreset)
+      || !usesVortexField(activePreset)
       || !terrainTarget
     ) return
     const bounds = renderer.domElement.getBoundingClientRect()
@@ -1043,7 +1104,7 @@ async function start(): Promise<void> {
     controls.update()
     camera.updateMatrixWorld()
     world.update(simulationTime, simulationDelta)
-    if (isVortexPreset(activePreset)) {
+    if (usesVortexField(activePreset)) {
       fields.tornado.center.copy(world.vortexCenter)
       fields.tornado.envelope.axisControl[0] = (
         DEMO_VORTEX_ENVELOPE.axisControl[0] * vortexLook.axisBend
@@ -1065,10 +1126,10 @@ async function start(): Promise<void> {
     windline.update({
       timeSeconds: simulationTime,
       deltaSeconds: simulationDelta,
-      anchor: isVortexPreset(activePreset) ? world.vortexCenter : world.anchor,
+      anchor: usesVortexField(activePreset) ? world.vortexCenter : world.anchor,
       camera,
       observerVelocity: OBSERVER_VELOCITY,
-      forward: activePreset === 'storm' ? STORM_DIRECTION : world.forward,
+      forward: world.forward,
       active: true,
       intensity: 1,
     })
@@ -1079,21 +1140,17 @@ async function start(): Promise<void> {
       camera,
       observerVelocity: OBSERVER_VELOCITY,
       forward: world.forward,
-      active: isVortexPreset(activePreset),
+      active: usesVortexField(activePreset),
       intensity: 1,
     })
     renderPipeline.render()
+    draws = renderer.info.render.drawCalls
+    passes = renderer.info.render.frameCalls
 
     frames += 1
     frameWindowCount += 1
     if (now - frameWindowStart >= 0.5) {
-      const currentRenderCalls = renderer.info.render.calls
       fps = Math.round(frameWindowCount / Math.max(0.001, now - frameWindowStart))
-      draws = Math.max(
-        0,
-        Math.round((currentRenderCalls - renderCallsAtWindowStart) / Math.max(1, frameWindowCount)),
-      )
-      renderCallsAtWindowStart = currentRenderCalls
       frameWindowCount = 0
       frameWindowStart = now
       windline.readStats(windlineStats)

@@ -227,6 +227,20 @@ async function runVariant(browser, backend) {
       initial.activeLines > 0,
       `${backend} snapshot must report visible wind lines`,
     )
+    const rendererTelemetry = await page.evaluate(() => {
+      const demo = globalThis.__threeWindlineDemo
+      const state = demo?.snapshot()
+      return {
+        snapshotDraws: Number(state?.draws),
+        snapshotPasses: Number(state?.passes),
+        rendererDraws: Number(demo?.renderer.info.render.drawCalls),
+        rendererPasses: Number(demo?.renderer.info.render.frameCalls),
+      }
+    })
+    assert.equal(rendererTelemetry.snapshotDraws, rendererTelemetry.rendererDraws)
+    assert.equal(rendererTelemetry.snapshotPasses, rendererTelemetry.rendererPasses)
+    assert.ok(rendererTelemetry.snapshotDraws >= initial.drawCalls)
+    assert.ok(rendererTelemetry.snapshotPasses > 0)
     assert.deepEqual(initial.raw.bloom, {
       strength: 0.12,
       radius: 0.16,
@@ -236,10 +250,13 @@ async function runVariant(browser, backend) {
     const presetNavigation = await page.evaluate(() => ({
       buttons: [...document.querySelectorAll('[data-preset]')]
         .map(button => button.getAttribute('data-preset')),
+      buttonLabels: [...document.querySelectorAll('[data-preset]')]
+        .map(button => button.textContent?.trim()),
       twisterOptions: [...document.querySelectorAll('#twisterSelect option')]
         .map(option => option.getAttribute('value')),
     }))
     assert.deepEqual(presetNavigation.buttons, ['breeze', 'storm'])
+    assert.deepEqual(presetNavigation.buttonLabels, ['Breeze', 'Hurricane'])
     assert.deepEqual(presetNavigation.twisterOptions, ['', 'tornado', 'water', 'fire'])
     assert.equal(await page.locator('#twisterSelect').inputValue(), '')
     const initialVane = await page.evaluate(() => {
@@ -530,6 +547,69 @@ async function runVariant(browser, backend) {
     )
 
     assert.equal(
+      await page.evaluate(() => globalThis.__threeWindlineDemo?.setPreset('storm')),
+      true,
+    )
+    await page.waitForFunction(
+      () => {
+        const state = globalThis.__threeWindlineDemo?.snapshot()
+        return state?.preset === 'storm'
+          && state?.curve === 'straight'
+          && Number(state?.windline?.count) === 640
+          && Number(state?.windline?.drawCalls) === 1
+          && Number(state?.vortexBody?.count) === 208
+          && Number(state?.vortexBody?.drawCalls) === 1
+          && Math.abs(Number(state?.vortexMotion?.angularSpeed) - 40.5) < 1e-6
+          && Number(state?.vortex?.height) === 46
+          && Number(state?.vortex?.topRadius) === 18.6
+          && Number(state?.vortex?.axisWander) === 3.4
+          && Number(state?.vortex?.volume) === 1.35
+      },
+      null,
+      { timeout },
+    )
+    const hurricane = normalizeSnapshot(await page.evaluate(readDemoSnapshot))
+    assert.deepEqual(hurricane.raw.bloom, {
+      strength: 0.34,
+      radius: 0.35,
+      threshold: 0.9,
+      exposure: 0.9,
+    })
+    assert.equal(await page.locator('#fieldName').textContent(), 'Hurricane')
+    assert.equal(await page.locator('#twisterSelect').inputValue(), '')
+    assert.equal(
+      await page.locator('[data-preset="storm"]').evaluate(
+        element => element.classList.contains('is-active'),
+      ),
+      true,
+    )
+    await page.waitForFunction(
+      () => document.querySelector('#lineValue')?.textContent === '640',
+      null,
+      { timeout },
+    )
+    assert.ok(Math.abs(
+      hurricane.raw.camera[0] - hurricane.raw.target[0] - 58,
+    ) < 0.01)
+    assert.ok(Math.abs(
+      hurricane.raw.camera[1] - hurricane.raw.target[1] - 12,
+    ) < 0.01)
+    assert.ok(Math.abs(
+      hurricane.raw.camera[2] - hurricane.raw.target[2] - 72,
+    ) < 0.01)
+    await page.waitForTimeout(200)
+    const hurricaneBasePath = variantScreenshotPath(backend)
+    const hurricaneExtension = extname(hurricaneBasePath)
+    const hurricaneTargetPath = hurricaneExtension.length > 0
+      ? `${hurricaneBasePath.slice(0, -hurricaneExtension.length)}-hurricane${hurricaneExtension}`
+      : `${hurricaneBasePath}-hurricane.png`
+    await mkdir(dirname(hurricaneTargetPath), { recursive: true })
+    const hurricaneScreenshot = await canvas.screenshot({ path: hurricaneTargetPath })
+    const hurricanePixels = analyzePixels(hurricaneScreenshot)
+    assertRenderedPixels(hurricanePixels, `${backend} hurricane`)
+
+    await page.evaluate(() => globalThis.__threeWindlineDemo?.reset())
+    assert.equal(
       await page.evaluate(() => globalThis.__threeWindlineDemo?.setPreset('breeze')),
       true,
     )
@@ -543,6 +623,17 @@ async function runVariant(browser, backend) {
       null,
       { timeout },
     )
+    const resetCamera = normalizeSnapshot(await page.evaluate(readDemoSnapshot))
+    for (const [actual, expected] of resetCamera.raw.camera.map(
+      (value, index) => [value, [35, 22, 48][index]],
+    )) {
+      assert.ok(Math.abs(actual - expected) < 1e-9)
+    }
+    for (const [actual, expected] of resetCamera.raw.target.map(
+      (value, index) => [value, [0, 7.2, 8][index]],
+    )) {
+      assert.ok(Math.abs(actual - expected) < 1e-9)
+    }
     assert.equal(await page.locator('#twisterSelect').inputValue(), '')
 
     let shaderBudget
@@ -706,6 +797,8 @@ async function runVariant(browser, backend) {
       pixels,
       vortexScreenshot: vortexTargetPath,
       vortexPixels,
+      hurricaneScreenshot: hurricaneTargetPath,
+      hurricanePixels,
     }
   } finally {
     await context.close()

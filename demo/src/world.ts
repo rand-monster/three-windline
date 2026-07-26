@@ -30,6 +30,10 @@ export function isVortexPreset(preset: DemoPresetId): preset is DemoVortexPreset
   return VORTEX_PRESET_IDS.includes(preset as DemoVortexPresetId)
 }
 
+export function usesVortexField(preset: DemoPresetId): boolean {
+  return preset === 'storm' || isVortexPreset(preset)
+}
+
 type DisposableMaterial = THREE.Material & { map?: THREE.Texture | null }
 
 export interface DemoVortexLook {
@@ -496,8 +500,6 @@ function createGrassField() {
 
   const breezeWeight = float(1).sub(clamp(abs(preset), 0, 1))
   const tornadoWeight = float(1).sub(clamp(abs(preset.sub(1)), 0, 1))
-  const stormWeight = float(1).sub(clamp(abs(preset.sub(2)), 0, 1))
-
   const vortexX = rootX.sub(vortexCenter.x)
   const vortexZ = rootZ.sub(vortexCenter.y)
   const vortexRadius = vortexX
@@ -528,7 +530,6 @@ function createGrassField() {
     ).mul(0.07),
   ).mul(vortexFalloff).mul(tornadoWeight)
   const windX = breezeWeight.mul(0.42 * 0.95)
-    .add(stormWeight.mul(1.08 * 0.78))
     .add(
       tornadoWeight.mul(
         vortexTangentX
@@ -537,7 +538,6 @@ function createGrassField() {
       ),
     )
   const windZ = breezeWeight.mul(0.42 * 0.31)
-    .add(stormWeight.mul(1.08 * 0.63))
     .add(
       tornadoWeight.mul(
         vortexTangentZ
@@ -1277,8 +1277,8 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   }
 
   function setVortexLook(look: DemoVortexLook): void {
-    const height = THREE.MathUtils.clamp(look.height, 12, 48)
-    const topRadius = THREE.MathUtils.clamp(look.topRadius, 3, 18)
+    const height = THREE.MathUtils.clamp(look.height, 12, 56)
+    const topRadius = THREE.MathUtils.clamp(look.topRadius, 3, 24)
     const radialScale = topRadius / DEMO_VORTEX_ENVELOPE.radius[1]
     vortex.group.scale.set(
       radialScale,
@@ -1307,12 +1307,8 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
 
   function setPreset(preset: DemoPresetId): void {
     currentPreset = preset
-    grass.preset.value = preset === 'breeze'
-      ? 0
-      : isVortexPreset(preset)
-        ? 1
-        : 2
-    const vortexActive = isVortexPreset(preset)
+    grass.preset.value = preset === 'breeze' ? 0 : 1
+    const vortexActive = usesVortexField(preset)
     vortex.group.visible = vortexActive
     sculpture.group.visible = !vortexActive
     rocks.visible = !vortexActive
@@ -1323,21 +1319,32 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
       targetMarker.cancel()
     }
     if (preset === 'storm') {
-      targetFog.set(0x657d7c)
-      targetSunIntensity = 1.6
+      targetMarker.setColor(0xd8f6ff)
+      targetFog.set(0x587178)
+      targetSunIntensity = 1.45
+      vortex.dust.material.color.set(0xdceff2)
+      vortex.glow.material.color.set(0x91d7e6)
+      vortex.halo.material.color.set(0x587b8b)
+      vortex.contactLight.color.set(0xc9eff7)
+      vortexGlowStrength = 0.36
+      vortexHaloStrength = 0.075
+      vortexContactLightIntensity = 112
+      for (const [index, ring] of vortex.rings.entries()) {
+        ring.material.color.set(index % 2 === 0 ? 0xe9faff : 0x78b7ca)
+      }
     } else if (preset === 'water') {
-      targetMarker.setColor(0xbcefff)
-      targetFog.set(0x9cc4ca)
+      targetMarker.setColor(0xd5f8ff)
+      targetFog.set(0xb7dbe0)
       targetSunIntensity = 4.35
-      vortex.dust.material.color.set(0xdaf9ff)
-      vortex.glow.material.color.set(0x8de4ff)
-      vortex.halo.material.color.set(0x4abce8)
-      vortex.contactLight.color.set(0xc6f4ff)
+      vortex.dust.material.color.set(0xefffff)
+      vortex.glow.material.color.set(0x7ee8ff)
+      vortex.halo.material.color.set(0x54cfe8)
+      vortex.contactLight.color.set(0xd8fbff)
       vortexGlowStrength = 0.44
       vortexHaloStrength = 0.09
       vortexContactLightIntensity = 125
       for (const [index, ring] of vortex.rings.entries()) {
-        ring.material.color.set(index % 2 === 0 ? 0xe9fdff : 0x68d3ff)
+        ring.material.color.set(index % 2 === 0 ? 0xf5ffff : 0x85e4ff)
       }
     } else if (preset === 'fire') {
       targetMarker.setColor(0xffa34f)
@@ -1397,7 +1404,7 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
       * (1 - Math.exp(-4 * Math.min(deltaSeconds, 0.05)))
     grass.time.value = timeSeconds
 
-    if (isVortexPreset(currentPreset)) {
+    if (usesVortexField(currentPreset)) {
       const delta = Math.min(0.05, Math.max(0, deltaSeconds))
       const deltaX = vortexTarget.x - vortexCenter.x
       const deltaZ = vortexTarget.z - vortexCenter.z

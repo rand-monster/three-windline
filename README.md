@@ -36,11 +36,11 @@ The package is ESM-only. It does not expose a CommonJS `require()` entry.
 - An allocation-free field-sampling contract for custom simulation sources.
 
 The [interactive demo](https://windline.rand.monster) includes Breeze, Wind,
-Water, Fire, and Storm Front presets. Wind, Water, and Fire are
-three radial vortex themes, reported as Tornado, Water Vortex, and Fire Vortex
-in the scene readout. With one of those themes active, click or tap the terrain
-without dragging to move the vortex target; the funnel eases toward the selected
-point.
+Water, Fire, and Hurricane presets. Wind, Water, Fire, and Hurricane use the
+analytic radial vortex program; Hurricane expands it into a distant supercell
+funnel while retaining the existing `storm` preset ID. With a vortex active,
+click or tap the terrain without dragging to move its target; the funnel eases
+toward the selected point.
 
 ## Install
 

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.5 - 2026-07-25
+
+### Changed
+
+- Lifts Water Vortex from deep cobalt into a brighter lake-blue and sky-blue
+  palette across its ribbons, body, fog, contact light, debris, and ground
+  rings while preserving the distinct white-and-blue grouping.
+- Fixes the demo telemetry to report actual per-frame draw commands instead of
+  an averaged render-pass count, and exposes render passes separately in the
+  automation snapshot.
+- Replaces Storm Front with a giant Hurricane presentation while retaining the
+  existing `storm` preset ID: the new look uses the analytic vortex program,
+  a 46-meter asymmetric envelope, denser funnel geometry, supercell lighting,
+  and a dedicated wide camera composition.
+
 ## 0.3.4 - 2026-07-25
 
 ### Changed

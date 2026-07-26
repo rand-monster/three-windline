@@ -61,7 +61,7 @@ export interface WindLineMaterialUniforms {
   readonly surface: MutableUniform<Vector4>
   readonly surfaceLight: MutableUniform<Vector3>
   readonly shape: MutableUniform<Vector4>
-  readonly curve: MutableUniform<Vector3>
+  readonly curve: MutableUniform<Vector4>
   readonly fade: MutableUniform<Vector4>
   readonly motion: MutableUniform<Vector4>
   readonly vortexShape: MutableUniform<Vector4>
@@ -136,10 +136,11 @@ export function createWindLineMaterial(
     style.curveFrequency[0],
     style.curveFrequency[1],
   ))
-  const uCurve = uniform(new Vector3(
+  const uCurve = uniform(new Vector4(
     style.curveSweepRadians,
     style.curveTurns,
     style.colorRandomness,
+    style.colorBanding,
   ))
   const uFade = uniform(new Vector4(
     style.nearFade[0],
@@ -185,6 +186,7 @@ export function createWindLineMaterial(
   const uCurveSweepRadians = uCurve.x
   const uCurveTurns = uCurve.y
   const uColorRandomness = uCurve.z
+  const uColorBanding = uCurve.w
   const uNearStart = uFade.x
   const uNearEnd = uFade.y
   const uFarStart = uFade.z
@@ -421,7 +423,14 @@ export function createWindLineMaterial(
   const nearCameraFade = smoothstep(uNearStart, uNearEnd, distance)
   const farCameraFade = float(1).sub(smoothstep(uFarStart, uFarEnd, distance))
   const flowVariation = float(0.72).add(trait.z.mul(0.24))
-  const authoredColor = mix(uWarmColor, uCoolColor, seed.w.mul(0.72))
+  const continuousColorMix = seed.w.mul(0.72)
+  const groupedColorMix = smoothstep(0.5, 0.7, seed.w)
+  const authoredColorMix = mix(
+    continuousColorMix,
+    groupedColorMix,
+    uColorBanding,
+  )
+  const authoredColor = mix(uWarmColor, uCoolColor, authoredColorMix)
   const hue = trait.y.mul(6)
   const randomInstanceColor = clamp(
     abs(mod(vec3(hue, hue.add(4), hue.add(2)), 6).sub(3)).sub(1),
@@ -553,6 +562,7 @@ export function applyWindLineStyle(
     style.curveSweepRadians,
     style.curveTurns,
     style.colorRandomness,
+    style.colorBanding,
   )
   uniforms.fade.value.set(
     style.nearFade[0],

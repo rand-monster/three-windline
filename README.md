@@ -421,6 +421,7 @@ wind.setStyle({
   opacity: 0.46,
   colors: ['#fff1cf', '#a9fff1'],
   colorRandomness: 0.5,
+  colorBanding: 0.7,
 })
 
 scene.remove(wind.mesh) // optional; dispose() also removes it
@@ -455,6 +456,7 @@ mutators throw after disposal.
 | `surfaceLightDirection` | `[-0.42, 0.84, -0.34]` | Non-zero finite world-space direction for radial shading; the shader normalizes it. |
 | `colors` | `[#fff7e8, #b8fff4]` | Per-line color endpoints. |
 | `colorRandomness` | `0.32` | Stable seed-based random color mixed independently per instance. |
+| `colorBanding` | `0` | Strength of deterministic endpoint grouping, from continuous interpolation at 0 to distinct palette bands at 1. |
 | `opacity` | `0.38` | Global opacity multiplier. |
 | `curveAmplitude` | `[2.4, 1.1]` | Horizontal/vertical wave or orbit radii, depending on the curve. |
 | `curveFrequency` | `[0.19, 0.13]` | Horizontal/vertical frequencies used by `flow`. |

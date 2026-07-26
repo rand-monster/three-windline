@@ -137,6 +137,7 @@ test('surface response styles resolve defaults and accept their documented bound
       specular: defaults.surfaceSpecular,
       rim: defaults.surfaceRim,
       emission: defaults.surfaceEmission,
+      colorBanding: defaults.colorBanding,
       lightDirection: defaults.surfaceLightDirection,
     },
     {
@@ -144,6 +145,7 @@ test('surface response styles resolve defaults and accept their documented bound
       specular: 0.28,
       rim: 0.18,
       emission: 0,
+      colorBanding: 0,
       lightDirection: [-0.42, 0.84, -0.34],
     },
   )
@@ -153,12 +155,14 @@ test('surface response styles resolve defaults and accept their documented bound
     surfaceSpecular: 2,
     surfaceRim: 0,
     surfaceEmission: 2,
+    colorBanding: 1,
     surfaceLightDirection: [1, 2, 3],
   })
   assert.equal(resolved.surfaceRoughness, 1)
   assert.equal(resolved.surfaceSpecular, 2)
   assert.equal(resolved.surfaceRim, 0)
   assert.equal(resolved.surfaceEmission, 2)
+  assert.equal(resolved.colorBanding, 1)
   assert.deepEqual(resolved.surfaceLightDirection, [1, 2, 3])
 })
 
@@ -245,6 +249,9 @@ test('options and style validation fail early at the public capacity boundaries'
     { surfaceLightDirection: [1, 0, Number.POSITIVE_INFINITY] as const },
     { opacity: 1.01 },
     { colorRandomness: 1.01 },
+    { colorBanding: -0.001 },
+    { colorBanding: 1.001 },
+    { colorBanding: Number.NaN },
     { curveSweepRadians: 0 },
     { curveTurns: 33 },
     { colors: ['#fff'] as unknown as readonly [string, string] },
@@ -832,6 +839,7 @@ test('runtime style updates validate before touching static geometry', () => {
       widthCssPixels: [1.25, 2.5],
       colors: ['#fff4dc', '#9affee'],
       colorRandomness: 0.86,
+      colorBanding: 0.74,
       surfaceRoughness: 0.36,
       surfaceSpecular: 1.2,
       surfaceRim: 0.75,
@@ -844,6 +852,7 @@ test('runtime style updates validate before touching static geometry', () => {
     assert.equal(traitAttribute.version, traitVersion)
     assert.throws(() => system.setStyle({ opacity: Number.NaN }), RangeError)
     assert.throws(() => system.setStyle({ colorRandomness: -0.01 }), RangeError)
+    assert.throws(() => system.setStyle({ colorBanding: 1.01 }), RangeError)
     assert.throws(() => system.setStyle({ widthCssPixels: [3, 2] }), RangeError)
     assert.throws(
       () => system.setStyle({ colors: [] as unknown as [string, string] }),

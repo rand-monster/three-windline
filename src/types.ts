@@ -66,6 +66,7 @@ export interface WindLineStyle {
   surfaceLightDirection?: readonly [number, number, number]
   colors: readonly [ColorRepresentation, ColorRepresentation]
   colorRandomness: number
+  colorBanding: number
   opacity: number
   curveAmplitude: readonly [number, number]
   curveFrequency: readonly [number, number]

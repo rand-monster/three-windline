@@ -9,6 +9,7 @@ export interface CoherentWindFieldOptions {
 }
 
 export class CoherentWindField implements WindField {
+  readonly program = 'affine' as const
   readonly baseVelocity = new Vector3(5, 0, 1)
   gustSpeed = 5
   turbulence = 0.8

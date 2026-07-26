@@ -2,6 +2,28 @@ import { Vector3 } from 'three'
 import { copyFiniteVec3 } from '../internal/math.js'
 import type { Vec3Like, WindField, WindSampleTarget } from '../types.js'
 
+export interface VortexWindEnvelopeOptions {
+  height?: number
+  radius?: readonly [number, number]
+  taperExponent?: number
+  shellBias?: number
+  coreRadiusRatio?: number
+  axisControl?: readonly [number, number]
+  axisTip?: readonly [number, number]
+  axisWander?: number
+}
+
+export interface VortexWindEnvelope {
+  height: number
+  radius: [number, number]
+  taperExponent: number
+  shellBias: number
+  coreRadiusRatio: number
+  axisControl: [number, number]
+  axisTip: [number, number]
+  axisWander: number
+}
+
 export interface VortexWindFieldOptions {
   center?: Vec3Like
   baseVelocity?: Vec3Like
@@ -10,11 +32,23 @@ export interface VortexWindFieldOptions {
   lift?: number
   turbulence?: number
   softeningRadius?: number
+  envelope?: VortexWindEnvelopeOptions
 }
 
 export class VortexWindField implements WindField {
+  readonly program = 'vortex' as const
   readonly center = new Vector3()
   readonly baseVelocity = new Vector3(0.8, 0, 0.2)
+  readonly envelope: VortexWindEnvelope = {
+    height: 24,
+    radius: [0.8, 8],
+    taperExponent: 0.72,
+    shellBias: 0.76,
+    coreRadiusRatio: 0.12,
+    axisControl: [1.4, -0.7],
+    axisTip: [-1, 1.1],
+    axisWander: 0.8,
+  }
   angularSpeed = 1.4
   radialInflow = 0.22
   lift = 4.5
@@ -39,6 +73,9 @@ export class VortexWindField implements WindField {
       options.softeningRadius,
       this.softeningRadius,
     )
+    if (options.envelope !== undefined) {
+      configureEnvelope(this.envelope, options.envelope)
+    }
     return this
   }
 
@@ -128,4 +165,95 @@ function positive(name: string, value: number | undefined, fallback: number): nu
   const result = finiteValue(name, value, fallback)
   if (result <= 0) throw new RangeError(`${name} must be > 0`)
   return result
+}
+
+function configureEnvelope(
+  target: VortexWindEnvelope,
+  input: VortexWindEnvelopeOptions,
+): void {
+  if (!input || typeof input !== 'object') {
+    throw new TypeError('envelope must be an object')
+  }
+  target.height = positive('envelope.height', input.height, target.height)
+  if (input.radius !== undefined) {
+    const radius = input.radius
+    if (
+      !Array.isArray(radius)
+      || radius.length !== 2
+      || !radius.every(value => typeof value === 'number' && Number.isFinite(value))
+      || radius[0] <= 0
+      || radius[1] <= radius[0]
+    ) {
+      throw new RangeError('envelope.radius must be [base, top] with 0 < base < top')
+    }
+    target.radius[0] = radius[0]
+    target.radius[1] = radius[1]
+  }
+  target.taperExponent = numberInRange(
+    'envelope.taperExponent',
+    input.taperExponent,
+    target.taperExponent,
+    0.2,
+    4,
+  )
+  target.shellBias = numberInRange(
+    'envelope.shellBias',
+    input.shellBias,
+    target.shellBias,
+    0,
+    1,
+  )
+  target.coreRadiusRatio = numberInRange(
+    'envelope.coreRadiusRatio',
+    input.coreRadiusRatio,
+    target.coreRadiusRatio,
+    0.01,
+    0.5,
+  )
+  configureFinitePair(
+    target.axisControl,
+    input.axisControl,
+    'envelope.axisControl',
+  )
+  configureFinitePair(
+    target.axisTip,
+    input.axisTip,
+    'envelope.axisTip',
+  )
+  target.axisWander = nonNegative(
+    'envelope.axisWander',
+    input.axisWander,
+    target.axisWander,
+  )
+}
+
+function numberInRange(
+  name: string,
+  value: number | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+): number {
+  const result = finiteValue(name, value, fallback)
+  if (result < minimum || result > maximum) {
+    throw new RangeError(`${name} must be from ${minimum} to ${maximum}`)
+  }
+  return result
+}
+
+function configureFinitePair(
+  target: [number, number],
+  input: readonly [number, number] | undefined,
+  name: string,
+): void {
+  if (input === undefined) return
+  if (
+    !Array.isArray(input)
+    || input.length !== 2
+    || !input.every(value => typeof value === 'number' && Number.isFinite(value))
+  ) {
+    throw new RangeError(`${name} must contain two finite numbers`)
+  }
+  target[0] = input[0]
+  target[1] = input[1]
 }

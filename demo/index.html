@@ -22,7 +22,7 @@
         <a class="brand" href="/" aria-label="three-windline home">
           <span class="brand-mark"></span>
           <span class="brand-name">three-windline</span>
-          <span class="brand-version">v0.2</span>
+          <span class="brand-version">v0.3</span>
         </a>
 
         <div class="preset-switcher" role="group" aria-label="Wind field preset">
@@ -33,7 +33,13 @@
             Canyon Shear
           </button>
           <button class="preset-button" type="button" data-preset="tornado">
-            Tornado
+            Wind
+          </button>
+          <button class="preset-button" type="button" data-preset="water">
+            Water
+          </button>
+          <button class="preset-button" type="button" data-preset="fire">
+            Fire
           </button>
           <button class="preset-button" type="button" data-preset="storm">
             Storm Front
@@ -96,7 +102,7 @@
             <div class="range-control">
               <label for="densitySlider">Density</label>
               <output id="densityValue" for="densitySlider">160</output>
-              <input id="densitySlider" type="range" min="24" max="480" step="8" value="160" />
+              <input id="densitySlider" type="range" min="24" max="720" step="8" value="160" />
             </div>
             <div class="range-control">
               <label for="speedSlider">Speed</label>
@@ -110,6 +116,68 @@
             </div>
           </section>
 
+          <section
+            id="vortexSettings"
+            class="settings-section"
+            aria-labelledby="vortexSettingsTitle"
+            hidden
+          >
+            <h2 id="vortexSettingsTitle">Vortex form</h2>
+            <div class="range-control">
+              <label for="heightSlider">Height</label>
+              <output id="heightValue" for="heightSlider">26.0 m</output>
+              <input id="heightSlider" type="range" min="16" max="38" step="0.5" value="26" />
+            </div>
+            <div class="range-control">
+              <label for="topRadiusSlider">Crown radius</label>
+              <output id="topRadiusValue" for="topRadiusSlider">9.6 m</output>
+              <input
+                id="topRadiusSlider"
+                type="range"
+                min="5"
+                max="15"
+                step="0.2"
+                value="9.6"
+              />
+            </div>
+            <div class="range-control">
+              <label for="axisBendSlider">Axis bend</label>
+              <output id="axisBendValue" for="axisBendSlider">1.00×</output>
+              <input
+                id="axisBendSlider"
+                type="range"
+                min="0"
+                max="2"
+                step="0.05"
+                value="1"
+              />
+            </div>
+            <div class="range-control">
+              <label for="axisWanderSlider">Axis wander</label>
+              <output id="axisWanderValue" for="axisWanderSlider">1.45 m</output>
+              <input
+                id="axisWanderSlider"
+                type="range"
+                min="0"
+                max="3"
+                step="0.05"
+                value="1.45"
+              />
+            </div>
+            <div class="range-control">
+              <label for="volumeSlider">Volume</label>
+              <output id="volumeValue" for="volumeSlider">100%</output>
+              <input
+                id="volumeSlider"
+                type="range"
+                min="0"
+                max="1.5"
+                step="0.05"
+                value="1"
+              />
+            </div>
+          </section>
+
           <section class="settings-section" aria-labelledby="ribbonSettingsTitle">
             <h2 id="ribbonSettingsTitle">Ribbon</h2>
             <div class="range-control">
@@ -120,12 +188,12 @@
             <div class="range-control">
               <label for="widthSlider">Width</label>
               <output id="widthValue" for="widthSlider">1.4 px</output>
-              <input id="widthSlider" type="range" min="0.6" max="3.4" step="0.1" value="1.4" />
+              <input id="widthSlider" type="range" min="0.6" max="8" step="0.1" value="1.4" />
             </div>
             <div class="range-control">
               <label for="opacitySlider">Opacity</label>
               <output id="opacityValue" for="opacitySlider">34%</output>
-              <input id="opacitySlider" type="range" min="0.08" max="0.72" step="0.01" value="0.34" />
+              <input id="opacitySlider" type="range" min="0.08" max="0.92" step="0.01" value="0.34" />
             </div>
           </section>
 

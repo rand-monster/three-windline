@@ -6,9 +6,10 @@ Deterministic, camera-stable GPU wind ribbons for Three.js.
 [GitHub](https://github.com/rand-monster/three-windline) |
 [MIT license](./LICENSE)
 
-`three-windline` turns a sampled wind field into anti-aliased, screen-space
-ribbons. It targets Three.js r185 `WebGPURenderer` and uses one instanced draw
-per wind-line system.
+`three-windline` turns a sampled wind field into anti-aliased GPU ribbons.
+Camera-facing ribbons keep a stable screen-space width, while vortex ribbons
+can use a radial frame and world-space width. It targets Three.js r185
+`WebGPURenderer` and uses one instanced draw per wind-line system.
 
 > **Pre-release:** the package metadata declares the name `three-windline`, but
 > this repository does not claim that an npm release is available yet. Use a
@@ -20,18 +21,26 @@ The package is ESM-only. It does not expose a CommonJS `require()` entry.
 
 - One GPU draw for up to 4,096 deterministic ribbons.
 - TSL vertex generation with native WebGPU and a WebGL2 backend option.
-- Stable CSS-pixel ribbon width, derivative edge anti-aliasing, and camera
-  near/far fades.
+- Construction-specialized `camera` ribbons with stable CSS-pixel width and
+  `radial` vortex ribbons with world-space width.
+- Derivative edge anti-aliasing and camera near/far fades.
 - Static per-instance seed buffers. Runtime updates change uniforms, not
   instance data.
 - Compile-specialized `flow`, `straight`, `arc`, `ring`, `helix`, and `spiral`
   curve programs.
+- Construction-specialized `affine` and exact analytic `vortex` GPU field
+  programs.
 - Uniform, affine/shear, coherent gust, and softened vortex wind fields.
-- Runtime density, field, and style changes without rebuilding geometry.
+- Runtime density, style, and same-program field changes without rebuilding
+  geometry.
 - An allocation-free field-sampling contract for custom simulation sources.
 
 The [interactive demo](https://windline.rand.monster) includes Breeze, Canyon
-Shear, Tornado, and Storm Front presets.
+Shear, Wind, Water, Fire, and Storm Front presets. Wind, Water, and Fire are
+three radial vortex themes, reported as Tornado, Water Vortex, and Fire Vortex
+in the scene readout. With one of those themes active, click or tap the terrain
+without dragging to move the vortex target; the funnel eases toward the selected
+point.
 
 ## Install
 
@@ -158,15 +167,51 @@ math. Numeric shape parameters remain uniforms and can be changed with
 `setStyle()`. Recreate the system to change its curve program; this is an
 intentional pipeline change, not a frame-time control.
 
-Every curve is composed with the sampled field and its local Jacobian. The
-field moves and bends the centerline; the curve program defines the ribbon's
-intrinsic shape. Instance phase and handedness come from deterministic,
-independent PCG lanes.
+Field transport is specialized separately at construction. The `affine`
+program composes the curve with a sampled velocity and local Jacobian. The
+`vortex` program instead evaluates the funnel centerline and exact tangent
+analytically on the GPU and requires `curve: 'straight'`. Instance phase and
+handedness come from deterministic, independent PCG lanes.
+
+## Ribbon Modes
+
+Choose the ribbon frame when constructing a system:
+
+```ts
+const vortexBody = createWindLineSystem({
+  scene,
+  field: new VortexWindField(),
+  curve: 'straight',
+  ribbonMode: 'radial',
+  depthWrite: true,
+  style: {
+    widthWorldUnits: [0.08, 0.18],
+    surfaceRoughness: 0.72,
+    surfaceSpecular: 0.28,
+    surfaceRim: 0.18,
+    surfaceEmission: 0,
+    surfaceLightDirection: [-0.42, 0.84, -0.34],
+  },
+})
+```
+
+| Mode | Behavior |
+| --- | --- |
+| `camera` | Default. Faces the active camera and uses `widthCssPixels`, keeping its apparent width stable across distance and device pixel ratio. |
+| `radial` | Orients a vortex ribbon around the analytic funnel path and uses `widthWorldUnits`, so its apparent width changes with perspective. |
+
+`ribbonMode` is a construction-time shader variant and is exposed as the
+read-only `WindLineSystem.ribbonMode`. Recreate the system to change it.
+`radial` is intentionally narrow: it is accepted only with a
+`VortexWindField` and `curve: 'straight'`. Camera ribbons remain the default for
+all existing configurations.
 
 ## Built-In Fields
 
-Every field implements `WindField.sample(position, timeSeconds, out)`.
-They are exported from both `three-windline` and `three-windline/fields`.
+Every field implements `WindField.sample(position, timeSeconds, out)` and may
+expose a `program` marker. A missing marker resolves to `affine`, preserving the
+custom-field contract from earlier versions. Built-in fields are exported from
+both `three-windline` and `three-windline/fields`.
 
 ### Uniform
 
@@ -224,12 +269,48 @@ const field = new VortexWindField({
   lift: 5,
   turbulence: 1.8,
   softeningRadius: 8,
+  envelope: {
+    height: 28,
+    radius: [0.8, 9],
+    taperExponent: 0.72,
+    shellBias: 0.76,
+    coreRadiusRatio: 0.12,
+    axisControl: [1.4, -0.7],
+    axisTip: [-1, 1.1],
+    axisWander: 0.8,
+  },
+})
+
+const tornado = createWindLineSystem({
+  scene,
+  field,
+  curve: 'straight',
 })
 ```
 
 `VortexWindField` is the reusable tornado primitive. Its softened core avoids a
 singularity, while radial inflow and lift make the field readable as a volume
-instead of a flat rotation.
+instead of a flat rotation. `center` is the base of the funnel; the envelope
+extends upward from it.
+
+| Envelope option | Default | Meaning |
+| --- | --- | --- |
+| `height` | `24` | Vertical extent above the funnel base. |
+| `radius` | `[0.8, 8]` | Funnel radii at the base and top. |
+| `taperExponent` | `0.72` | Shapes how the radius grows over the funnel height. |
+| `shellBias` | `0.76` | Biases deterministic ribbon placement toward the outer shell. |
+| `coreRadiusRatio` | `0.12` | Sets the inner-core radius as a fraction of the local funnel radius. |
+| `axisControl` | `[1.4, -0.7]` | XZ offset of the quadratic axis control point, relative to the funnel base. |
+| `axisTip` | `[-1, 1.1]` | XZ offset of the funnel axis at the top, relative to the funnel base. |
+| `axisWander` | `0.8` | Non-negative amplitude of time-varying axis motion in world units. |
+
+Passing this field to `createWindLineSystem({ field })` selects the exact
+analytic `vortex` GPU program. It evaluates funnel positions and tangents per
+vertex instead of extrapolating one anchor Jacobian. The specialized path still
+uses one draw, performs zero dynamic instance uploads, and compiles for both
+native WebGPU and the WebGL2 backend. Use `curve: 'straight'`; other curve
+programs are rejected because the vortex program defines the complete
+centerline.
 
 All mutable built-in fields return `this` from `setVelocity()` or `configure()`
 so runtime tuning can be chained.
@@ -245,10 +326,12 @@ Each system exposes:
 | --- | --- |
 | `mesh` | The generated `Mesh` for render-order or layer integration. |
 | `curve` | Read-only compile-specialized curve program. |
+| `program` | Read-only compile-specialized field program: `"affine"` or `"vortex"`. |
+| `ribbonMode` | Read-only compile-specialized ribbon mode: `"camera"` or `"radial"`. |
 | `capacity` | Read-only static instance capacity. |
 | `count` | Read-only active instance count. |
 | `setCount(count)` | Changes the draw range without reallocating seed buffers. |
-| `setField(field)` | Replaces the sampled wind source. |
+| `setField(field)` | Replaces the wind source when its resolved program matches `program`. |
 | `setStyle(partial)` | Validates and applies material/style uniforms. |
 | `update(frame)` | Samples the field and updates frame uniforms. |
 | `readStats(out)` | Fills caller-owned diagnostics without allocating. |
@@ -259,20 +342,25 @@ Each system exposes:
 | Option | Default | Notes |
 | --- | --- | --- |
 | `scene` | none | Adds the mesh immediately when provided. Otherwise add `mesh` yourself. |
-| `field` | `UniformWindField([5, 0, 1])` | Any object implementing `WindField`. |
+| `field` | `UniformWindField([5, 0, 1])` | Any `WindField`; its optional marker selects the GPU field program. |
 | `capacity` | `96` | Fixed allocation, from 1 to 4,096 lines. |
 | `count` | `min(42, capacity)` | Active instances, from 0 to `capacity`. |
 | `segments` | `28` | Ribbon segments, from 4 to 128. |
 | `seed` | `0` | Unsigned 32-bit deterministic seed. |
-| `curve` | `"flow"` | Compile-specialized centerline program. |
+| `curve` | `"flow"` | Compile-specialized centerline program; the `vortex` field program requires `"straight"`. |
+| `ribbonMode` | `"camera"` | `"camera"` uses CSS-pixel width; `"radial"` requires `VortexWindField` with `curve: "straight"` and uses world-unit width. |
 | `style` | package defaults | Partial `WindLineStyle`. |
 | `renderOrder` | `3` | Assigned to the generated mesh. |
 | `depthTest` | `true` | Depth testing for the transparent material. |
+| `depthWrite` | `false` | Whether the generated material writes depth; useful for opaque-looking radial vortex bodies, but may occlude later transparent draws. |
 | `blending` | `"normal"` | `"normal"` or `"additive"`. |
 | `name` | `"three-windline-field"` | Generated mesh name. |
 
-Capacity, segment count, and curve program define static GPU resources and must
-be chosen at construction. `setCount()` only changes the instanced draw range.
+Capacity, segment count, curve program, field program, and ribbon mode define
+static GPU resources and must be chosen at construction. The field program is
+inferred from `field`, so the public construction API remains
+`createWindLineSystem({ field })`. `setCount()` only changes the instanced draw
+range.
 
 ### Migrating From 0.1
 
@@ -310,7 +398,7 @@ wind.update({
 | --- | --- |
 | `timeSeconds` | Simulation time in seconds. Use a monotonic game clock. |
 | `deltaSeconds` | Frame delta in seconds; the system clamps it to 0 through 0.25. |
-| `anchor` | World-space center of the wrapping wind region. |
+| `anchor` | World-space center of the wrapping region for `affine`; ignored for vortex positioning, which uses `field.center`. |
 | `camera` | Active camera used for billboarding and distance fading. |
 | `observerVelocity` | Optional world velocity subtracted from the field. |
 | `forward` | Optional world direction for the forward-biased region; defaults to camera forward on XZ. |
@@ -323,7 +411,10 @@ wind.update({
 
 ```ts
 wind.setCount(160)
-wind.setField(new VortexWindField({ center: [0, 0, 0] }))
+wind.setField(new CoherentWindField({
+  baseVelocity: [9, 0.1, 2],
+  gustSpeed: 7,
+}))
 wind.setStyle({
   length: 24,
   widthCssPixels: [1.1, 2.2],
@@ -335,6 +426,13 @@ wind.setStyle({
 scene.remove(wind.mesh) // optional; dispose() also removes it
 wind.dispose()
 ```
+
+`setField()` permits runtime swaps only within the system's construction-time
+program. Uniform, affine, coherent, and unmarked custom fields all resolve to
+`affine` and can replace one another. Rebuild with
+`createWindLineSystem({ field })` when changing between `affine` and `vortex`.
+Changing `ribbonMode` or material depth state also requires rebuilding the
+system; neither is a `setStyle()` control.
 
 `dispose()` releases geometry and material resources and is idempotent. Runtime
 mutators throw after disposal.
@@ -349,6 +447,12 @@ mutators throw after disposal.
 | `forwardBias` | `0.25` | Region offset along the supplied forward direction. |
 | `length` | `15.5` | World-space ribbon length. |
 | `widthCssPixels` | `[0.9, 1.7]` | Deterministic per-line width range in CSS pixels. |
+| `widthWorldUnits` | `[0.08, 0.18]` | Deterministic per-line **total width** range for `radial` ribbons, in world units; these values are not half-widths. |
+| `surfaceRoughness` | `0.72` | Radial-surface highlight spread, from 0 through 1. |
+| `surfaceSpecular` | `0.28` | Radial-surface highlight strength, from 0 through 2. |
+| `surfaceRim` | `0.18` | Radial-surface view-angle rim strength, from 0 through 2. |
+| `surfaceEmission` | `0` | Radial-surface unlit contribution, from 0 through 2. |
+| `surfaceLightDirection` | `[-0.42, 0.84, -0.34]` | Non-zero finite world-space direction for radial shading; the shader normalizes it. |
 | `colors` | `[#fff7e8, #b8fff4]` | Per-line color endpoints. |
 | `colorRandomness` | `0.32` | Stable seed-based random color mixed independently per instance. |
 | `opacity` | `0.38` | Global opacity multiplier. |
@@ -363,6 +467,14 @@ mutators throw after disposal.
 | `fieldSpeedMultiplier` | `1.8` | Maps sampled wind speed to line speed. |
 | `visibilityResponse` | `6` | Exponential fade response; `0` is immediate. |
 | `visibilityThreshold` | `[0.05, 1]` | Field signal range that wakes the effect. |
+
+The `surface*` controls provide lightweight, physically-inspired shading for
+`radial` ribbons using an internal directional-light approximation,
+view-dependent highlights, rim response, and emission.
+`surfaceLightDirection` must contain three finite values and have non-zero
+length; its magnitude has no effect because the shader normalizes it. These
+controls do not consume Three.js scene lights, shadows, environment maps, or
+material IBL and should not be treated as a complete scene-light PBR material.
 
 Invalid ranges and non-finite configuration fail early with `RangeError`.
 
@@ -388,6 +500,8 @@ import type { WindField, WindSampleTarget } from 'three-windline'
 import type { Vector3 } from 'three'
 
 class HeightShearField implements WindField {
+  readonly program = 'affine' as const
+
   sample(position: Vector3, timeSeconds: number, out: WindSampleTarget): void {
     const pulse = Math.sin(timeSeconds * 0.4) * 0.8
     out.velocity.set(7 + position.y * 0.25 + pulse, 0.1, 2)
@@ -407,13 +521,14 @@ The Jacobian must satisfy:
 field(position + offset) ~= velocity + jacobian * offset
 ```
 
-The system samples the field once at the frame anchor. The shader applies that
-local affine approximation to every ribbon origin. This is why a nonlinear
-field such as a vortex should provide a useful local Jacobian.
+This contract drives the `affine` GPU program: the system samples the field once
+at the frame anchor, then applies the local approximation to ribbon origins.
+The explicit marker in the example is optional because unmarked fields also
+resolve to `affine`.
 
-Keep `sample()` allocation-free. The built-in nonlinear fields evaluate
-velocity and an analytic Jacobian together, without finite-difference resampling
-or per-frame objects.
+Keep `sample()` allocation-free. `VortexWindField` still implements the sampling
+contract for diagnostics and CPU consumers, but its `vortex` GPU program does
+not use the anchor Jacobian to shape rendered ribbons.
 
 ## Rendering And Performance
 
@@ -421,10 +536,13 @@ This package intentionally does **not** use a compute shader:
 
 1. Construction uploads one float `vec4` seed and one normalized byte `vec4`
    trait per capacity slot.
-2. Each frame samples the wind field once on the CPU.
-3. The frame updates a small set of material uniforms.
-4. A curve-specialized TSL vertex graph wraps, advects, shapes, and billboards
-   every ribbon. Fragment work is limited to edge coverage and compositing.
+2. Each frame samples the wind field on the CPU for visibility and diagnostics.
+3. The frame updates a small set of material uniforms, including the selected
+   field program's parameters.
+4. Curve-, field-, and ribbon-mode-specialized TSL vertex logic wraps, advects,
+   and shapes every ribbon. Camera ribbons billboard; radial ribbons use the
+   vortex path's analytic tangent and radial frame. Fragment work is limited to
+   edge coverage and compositing.
 5. One `InstancedBufferGeometry` draw emits the complete field.
 
 For this analytic effect, a compute pass would add dispatch and synchronization
@@ -437,8 +555,8 @@ Practical tuning order:
 1. Reduce `count` for direct vertex-cost savings.
 2. Reduce `segments` if long curves remain visually smooth.
 3. Keep `capacity` close to the largest count needed by the scene.
-4. Prefer `setCount()` and `setStyle()` over rebuilding systems; rebuild only
-   when selecting a different curve program.
+4. Prefer `setCount()` and `setStyle()` over rebuilding systems; rebuild when
+   selecting a different curve, field program, ribbon mode, or depth state.
 5. Reuse frame vectors and field objects.
 
 The generated mesh disables Three.js frustum culling because its vertices are
@@ -464,6 +582,8 @@ const renderer = new THREE.WebGPURenderer({
 })
 await renderer.init()
 ```
+
+Both backends compile the `affine` and exact analytic `vortex` field programs.
 
 The peer dependency is deliberately narrow:
 

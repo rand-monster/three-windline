@@ -12,5 +12,7 @@ export {
 } from './uniform.js'
 export {
   VortexWindField,
+  type VortexWindEnvelope,
+  type VortexWindEnvelopeOptions,
   type VortexWindFieldOptions,
 } from './vortex.js'

@@ -1,7 +1,9 @@
 import {
   WIND_LINE_CURVES,
+  WIND_LINE_RIBBON_MODES,
   type WindLineCurve,
   type WindLineOptions,
+  type WindLineRibbonMode,
   type WindLineStyle,
   type WindLineStyleInput,
 } from './types.js'
@@ -20,6 +22,12 @@ export const DEFAULT_WIND_LINE_STYLE: Readonly<WindLineStyle> = Object.freeze({
   forwardBias: 0.25,
   length: 15.5,
   widthCssPixels: Object.freeze([0.9, 1.7] as const),
+  widthWorldUnits: Object.freeze([0.08, 0.18] as const),
+  surfaceRoughness: 0.72,
+  surfaceSpecular: 0.28,
+  surfaceRim: 0.18,
+  surfaceEmission: 0,
+  surfaceLightDirection: Object.freeze([-0.42, 0.84, -0.34] as const),
   colors: Object.freeze([0xfff7e8, 0xb8fff4] as const),
   colorRandomness: 0.32,
   opacity: 0.38,
@@ -44,9 +52,11 @@ export interface ResolvedWindLineOptions {
   readonly segments: number
   readonly seed: number
   readonly curve: WindLineCurve
+  readonly ribbonMode: WindLineRibbonMode
   readonly style: WindLineStyle
   readonly renderOrder: number
   readonly depthTest: boolean
+  readonly depthWrite: boolean
   readonly blending: 'normal' | 'additive'
   readonly name: string
 }
@@ -122,6 +132,19 @@ function windLineCurve(value: unknown): WindLineCurve {
   return curve as WindLineCurve
 }
 
+function windLineRibbonMode(value: unknown): WindLineRibbonMode {
+  const ribbonMode = value ?? 'camera'
+  if (
+    typeof ribbonMode !== 'string'
+    || !WIND_LINE_RIBBON_MODES.includes(ribbonMode as WindLineRibbonMode)
+  ) {
+    throw new RangeError(
+      `ribbonMode must be one of: ${WIND_LINE_RIBBON_MODES.join(', ')}`,
+    )
+  }
+  return ribbonMode as WindLineRibbonMode
+}
+
 function blendingMode(value: unknown): 'normal' | 'additive' {
   const blending = value ?? 'normal'
   if (blending !== 'normal' && blending !== 'additive') {
@@ -168,6 +191,25 @@ function finitePair(
   return [first, second] as const
 }
 
+function finiteDirection(
+  name: string,
+  value: readonly [number, number, number] | undefined,
+  fallback: readonly [number, number, number],
+) {
+  const x = value?.[0] ?? fallback[0]
+  const y = value?.[1] ?? fallback[1]
+  const z = value?.[2] ?? fallback[2]
+  if (
+    !Number.isFinite(x)
+    || !Number.isFinite(y)
+    || !Number.isFinite(z)
+    || x * x + y * y + z * z < 1e-8
+  ) {
+    throw new RangeError(`${name} must be a non-zero finite vec3`)
+  }
+  return [x, y, z] as const
+}
+
 export function resolveWindLineStyle(
   input: WindLineStyleInput = {},
   base: WindLineStyle = DEFAULT_WIND_LINE_STYLE,
@@ -187,6 +229,45 @@ export function resolveWindLineStyle(
     forwardBias: numberInRange('forwardBias', input.forwardBias, base.forwardBias, -2, 2),
     length: numberInRange('length', input.length, base.length, 0.1, 1_000),
     widthCssPixels: orderedPair('widthCssPixels', input.widthCssPixels, base.widthCssPixels, 0.1),
+    widthWorldUnits: orderedPair(
+      'widthWorldUnits',
+      input.widthWorldUnits,
+      base.widthWorldUnits ?? DEFAULT_WIND_LINE_STYLE.widthWorldUnits!,
+      0.001,
+    ),
+    surfaceRoughness: numberInRange(
+      'surfaceRoughness',
+      input.surfaceRoughness,
+      base.surfaceRoughness ?? DEFAULT_WIND_LINE_STYLE.surfaceRoughness!,
+      0,
+      1,
+    ),
+    surfaceSpecular: numberInRange(
+      'surfaceSpecular',
+      input.surfaceSpecular,
+      base.surfaceSpecular ?? DEFAULT_WIND_LINE_STYLE.surfaceSpecular!,
+      0,
+      2,
+    ),
+    surfaceRim: numberInRange(
+      'surfaceRim',
+      input.surfaceRim,
+      base.surfaceRim ?? DEFAULT_WIND_LINE_STYLE.surfaceRim!,
+      0,
+      2,
+    ),
+    surfaceEmission: numberInRange(
+      'surfaceEmission',
+      input.surfaceEmission,
+      base.surfaceEmission ?? DEFAULT_WIND_LINE_STYLE.surfaceEmission!,
+      0,
+      2,
+    ),
+    surfaceLightDirection: finiteDirection(
+      'surfaceLightDirection',
+      input.surfaceLightDirection,
+      base.surfaceLightDirection ?? DEFAULT_WIND_LINE_STYLE.surfaceLightDirection!,
+    ),
     colors: [colors[0], colors[1]],
     colorRandomness: numberInRange(
       'colorRandomness',
@@ -258,9 +339,11 @@ export function resolveWindLineOptions(options: WindLineOptions = {}): ResolvedW
     segments,
     seed,
     curve: windLineCurve(options.curve),
+    ribbonMode: windLineRibbonMode(options.ribbonMode),
     style: resolveWindLineStyle(options.style),
     renderOrder: integerInRange('renderOrder', options.renderOrder, 3, -10_000, 10_000),
     depthTest: optionalBoolean('depthTest', options.depthTest, true),
+    depthWrite: optionalBoolean('depthWrite', options.depthWrite, false),
     blending: blendingMode(options.blending),
     name: optionalString('name', options.name, 'three-windline-field'),
   }

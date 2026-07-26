@@ -19,13 +19,17 @@ import {
   pcgHashU32,
   tslHashFixture,
 } from '../src/seed.js'
+import { WIND_LINE_RIBBON_MODES } from '../src/index.js'
 import { createWindLineSystem } from '../src/system.js'
 import type {
   WindLineFrame,
   WindLineOptions,
   WindLineStats,
 } from '../src/types.js'
-import { WIND_LINE_CURVES } from '../src/types.js'
+import {
+  WIND_FIELD_PROGRAMS,
+  WIND_LINE_CURVES,
+} from '../src/types.js'
 import {
   InstancedBufferAttribute,
   InstancedBufferGeometry,
@@ -106,6 +110,58 @@ test('wind-line geometry is one instanced ribbon without instance matrices', () 
   }
 })
 
+test('ribbon modes are exported and camera-facing ribbons remain the default', () => {
+  assert.deepEqual(WIND_LINE_RIBBON_MODES, ['camera', 'radial'])
+  assert.equal(Object.isFrozen(WIND_LINE_RIBBON_MODES), true)
+
+  const resolved = resolveWindLineOptions()
+  assert.equal(resolved.ribbonMode, 'camera')
+  assert.deepEqual(
+    resolved.style.widthWorldUnits,
+    DEFAULT_WIND_LINE_STYLE.widthWorldUnits,
+  )
+
+  const system = createWindLineSystem()
+  try {
+    assert.equal(system.ribbonMode, 'camera')
+  } finally {
+    system.dispose()
+  }
+})
+
+test('surface response styles resolve defaults and accept their documented bounds', () => {
+  const defaults = resolveWindLineStyle()
+  assert.deepEqual(
+    {
+      roughness: defaults.surfaceRoughness,
+      specular: defaults.surfaceSpecular,
+      rim: defaults.surfaceRim,
+      emission: defaults.surfaceEmission,
+      lightDirection: defaults.surfaceLightDirection,
+    },
+    {
+      roughness: 0.72,
+      specular: 0.28,
+      rim: 0.18,
+      emission: 0,
+      lightDirection: [-0.42, 0.84, -0.34],
+    },
+  )
+
+  const resolved = resolveWindLineStyle({
+    surfaceRoughness: 1,
+    surfaceSpecular: 2,
+    surfaceRim: 0,
+    surfaceEmission: 2,
+    surfaceLightDirection: [1, 2, 3],
+  })
+  assert.equal(resolved.surfaceRoughness, 1)
+  assert.equal(resolved.surfaceSpecular, 2)
+  assert.equal(resolved.surfaceRim, 0)
+  assert.equal(resolved.surfaceEmission, 2)
+  assert.deepEqual(resolved.surfaceLightDirection, [1, 2, 3])
+})
+
 test('options and style validation fail early at the public capacity boundaries', () => {
   const resolved = resolveWindLineOptions({
     capacity: 128,
@@ -115,6 +171,7 @@ test('options and style validation fail early at the public capacity boundaries'
     curve: 'helix',
     style: {
       widthCssPixels: [1.1, 2.2],
+      widthWorldUnits: [0.12, 0.24],
       colors: ['#ffffff', '#74f7ff'],
       opacity: 0.5,
     },
@@ -125,7 +182,12 @@ test('options and style validation fail early at the public capacity boundaries'
   assert.equal(resolved.seed, 0xffff_ffff)
   assert.equal(resolved.curve, 'helix')
   assert.deepEqual(resolved.style.widthCssPixels, [1.1, 2.2])
+  assert.deepEqual(resolved.style.widthWorldUnits, [0.12, 0.24])
   assert.notStrictEqual(resolved.style.widthCssPixels, DEFAULT_WIND_LINE_STYLE.widthCssPixels)
+  assert.notStrictEqual(
+    resolved.style.widthWorldUnits,
+    DEFAULT_WIND_LINE_STYLE.widthWorldUnits,
+  )
 
   for (const options of [
     { capacity: 0 },
@@ -138,6 +200,7 @@ test('options and style validation fail early at the public capacity boundaries'
     { seed: Number.NaN },
     { seed: 0x1_0000_0000 },
     { curve: 'bezier' },
+    { ribbonMode: 'screen' },
     { blending: 'screen' },
     { capacity: '8' },
   ] as readonly unknown[]) {
@@ -161,6 +224,25 @@ test('options and style validation fail early at the public capacity boundaries'
     { regionRadius: 0 },
     { verticalHalfSpan: Number.NaN },
     { widthCssPixels: [2, 1] as const },
+    { widthWorldUnits: [0, 0.1] as const },
+    { widthWorldUnits: [0.2, 0.1] as const },
+    { widthWorldUnits: [0.1, Number.NaN] as const },
+    { widthWorldUnits: [0.1, Number.POSITIVE_INFINITY] as const },
+    { surfaceRoughness: -0.001 },
+    { surfaceRoughness: 1.001 },
+    { surfaceRoughness: Number.NaN },
+    { surfaceSpecular: -0.001 },
+    { surfaceSpecular: 2.001 },
+    { surfaceSpecular: Number.NaN },
+    { surfaceRim: -0.001 },
+    { surfaceRim: 2.001 },
+    { surfaceRim: Number.NaN },
+    { surfaceEmission: -0.001 },
+    { surfaceEmission: 2.001 },
+    { surfaceEmission: Number.NaN },
+    { surfaceLightDirection: [0, 0, 0] as const },
+    { surfaceLightDirection: [1, Number.NaN, 0] as const },
+    { surfaceLightDirection: [1, 0, Number.POSITIVE_INFINITY] as const },
     { opacity: 1.01 },
     { colorRandomness: 1.01 },
     { curveSweepRadians: 0 },
@@ -203,6 +285,87 @@ test('every curve family specializes one system without changing the instance la
     } finally {
       system.dispose()
     }
+  }
+})
+
+test('field programs specialize transport and reject cross-program mutation', () => {
+  assert.deepEqual(WIND_FIELD_PROGRAMS, ['affine', 'vortex'])
+  const affine = createWindLineSystem({
+    field: new UniformWindField(),
+    curve: 'straight',
+  })
+  const vortexField = new VortexWindField({
+    envelope: {
+      height: 28,
+      radius: [0.75, 9],
+      taperExponent: 0.68,
+      shellBias: 0.72,
+      coreRadiusRatio: 0.14,
+    },
+  })
+  const vortex = createWindLineSystem({
+    field: vortexField,
+    curve: 'straight',
+  })
+  try {
+    assert.equal(affine.program, 'affine')
+    assert.equal(vortex.program, 'vortex')
+    affine.setField(new CoherentWindField())
+    vortex.setField(new VortexWindField())
+    assert.throws(
+      () => affine.setField(vortexField),
+      /cannot change field program from affine to vortex/,
+    )
+    assert.throws(
+      () => vortex.setField(new UniformWindField()),
+      /cannot change field program from vortex to affine/,
+    )
+    assert.throws(
+      () => createWindLineSystem({ field: vortexField, curve: 'flow' }),
+      /requires curve: "straight"/,
+    )
+  } finally {
+    affine.dispose()
+    vortex.dispose()
+  }
+})
+
+test('radial ribbons require a straight VortexWindField program', () => {
+  assert.throws(
+    () => createWindLineSystem({
+      ribbonMode: 'radial',
+      curve: 'straight',
+      field: new UniformWindField(),
+    }),
+    /radial ribbons require a VortexWindField/,
+  )
+  assert.throws(
+    () => createWindLineSystem({
+      ribbonMode: 'radial',
+      curve: 'flow',
+      field: new VortexWindField(),
+    }),
+    /VortexWindField requires curve: "straight"/,
+  )
+
+  const camera = createWindLineSystem({
+    ribbonMode: 'camera',
+    curve: 'straight',
+    field: new VortexWindField(),
+  })
+  const radial = createWindLineSystem({
+    ribbonMode: 'radial',
+    curve: 'straight',
+    field: new VortexWindField(),
+  })
+  try {
+    assert.equal(camera.ribbonMode, 'camera')
+    assert.equal(camera.program, 'vortex')
+    assert.equal(radial.ribbonMode, 'radial')
+    assert.equal(radial.program, 'vortex')
+  } finally {
+    camera.dispose()
+    radial.dispose()
   }
 })
 
@@ -359,6 +522,38 @@ test('built-in fields reject malformed configuration at construction', () => {
   assert.throws(() => new CoherentWindField({ turbulence: -1 }), RangeError)
   assert.throws(() => new VortexWindField({ angularSpeed: Number.NaN }), RangeError)
   assert.throws(() => new VortexWindField({ softeningRadius: 0 }), RangeError)
+  assert.throws(
+    () => new VortexWindField({ envelope: { height: 0 } }),
+    /envelope.height/,
+  )
+  assert.throws(
+    () => new VortexWindField({ envelope: { radius: [4, 2] } }),
+    /envelope.radius/,
+  )
+  assert.throws(
+    () => new VortexWindField({ envelope: { shellBias: 2 } }),
+    /envelope.shellBias/,
+  )
+  assert.throws(
+    () => new VortexWindField({
+      envelope: {
+        axisControl: [1] as unknown as [number, number],
+      },
+    }),
+    /envelope.axisControl/,
+  )
+  assert.throws(
+    () => new VortexWindField({
+      envelope: {
+        axisTip: [0, Number.NaN],
+      },
+    }),
+    /envelope.axisTip/,
+  )
+  assert.throws(
+    () => new VortexWindField({ envelope: { axisWander: -0.01 } }),
+    /envelope.axisWander/,
+  )
 })
 
 function createStatsTarget(): WindLineStats {
@@ -443,6 +638,88 @@ test('system update is one instanced draw with no instance matrix or seed upload
     assert.equal(geometry.getAttribute('instanceMatrix'), undefined)
   } finally {
     system.dispose()
+  }
+})
+
+test('camera and radial ribbons share the single-draw static geometry contract', () => {
+  const camera = new PerspectiveCamera(55, 16 / 9, 0.1, 500)
+  camera.position.set(3, 15, 26)
+  camera.lookAt(0, 5, 0)
+  camera.updateMatrixWorld(true)
+  const configurations = [
+    {
+      ribbonMode: 'camera' as const,
+      field: new UniformWindField([12, 0.4, 1]),
+    },
+    {
+      ribbonMode: 'radial' as const,
+      field: new VortexWindField({
+        baseVelocity: [12, 0.4, 1],
+      }),
+    },
+  ]
+
+  for (const configuration of configurations) {
+    const system = createWindLineSystem({
+      capacity: 48,
+      count: 24,
+      segments: 16,
+      curve: 'straight',
+      ribbonMode: configuration.ribbonMode,
+      field: configuration.field,
+      style: {
+        widthWorldUnits: [0.1, 0.2],
+      },
+    })
+    const geometry = system.mesh.geometry
+    assert.ok(geometry instanceof InstancedBufferGeometry)
+    const seedAttribute = getInstancedAttribute(geometry, 'aWindSeed')
+    const traitAttribute = getInstancedAttribute(geometry, 'aWindTrait')
+    const positionAttribute = geometry.getAttribute('position')
+    const seedVersion = seedAttribute.version
+    const traitVersion = traitAttribute.version
+    const frame: WindLineFrame = {
+      timeSeconds: 0,
+      deltaSeconds: 1 / 60,
+      anchor: new Vector3(),
+      camera,
+      active: true,
+    }
+    const stats = createStatsTarget()
+
+    try {
+      assert.equal(system.ribbonMode, configuration.ribbonMode)
+      assert.equal(system.mesh.children.length, 0)
+      assert.equal(Array.isArray(system.mesh.material), false)
+      assert.equal(geometry.instanceCount, 24)
+      assert.equal(geometry.getAttribute('instanceMatrix'), undefined)
+
+      for (let index = 0; index < 12; index += 1) {
+        frame.timeSeconds = index / 60
+        assert.equal(system.update(frame), true)
+      }
+      system.setStyle({
+        widthWorldUnits: [0.12, 0.22],
+        surfaceRoughness: 0.48,
+        surfaceSpecular: 0.9,
+        surfaceRim: 0.4,
+        surfaceEmission: 0.12,
+        surfaceLightDirection: [0.2, 1, -0.4],
+      })
+      assert.equal(system.update(frame), true)
+      system.readStats(stats)
+
+      assert.equal(stats.drawCalls, 1)
+      assert.equal(stats.triangles, 24 * 16 * 2)
+      assert.equal(stats.dynamicInstanceUploads, 0)
+      assert.strictEqual(system.mesh.geometry, geometry)
+      assert.equal(seedAttribute.version, seedVersion)
+      assert.equal(traitAttribute.version, traitVersion)
+      assert.strictEqual(geometry.getAttribute('position'), positionAttribute)
+      assert.equal(geometry.getAttribute('instanceMatrix'), undefined)
+    } finally {
+      system.dispose()
+    }
   }
 })
 
@@ -555,6 +832,11 @@ test('runtime style updates validate before touching static geometry', () => {
       widthCssPixels: [1.25, 2.5],
       colors: ['#fff4dc', '#9affee'],
       colorRandomness: 0.86,
+      surfaceRoughness: 0.36,
+      surfaceSpecular: 1.2,
+      surfaceRim: 0.75,
+      surfaceEmission: 0.18,
+      surfaceLightDirection: [0.1, 0.9, -0.3],
       visibilityThreshold: [0.1, 2],
     })
     assert.strictEqual(system.mesh.geometry, geometry)

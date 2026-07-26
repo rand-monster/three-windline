@@ -255,8 +255,91 @@ async function runVariant(browser, backend) {
       compiledCurves.push(curve)
     }
     assert.equal(
+      await page.evaluate(() => globalThis.__threeWindlineDemo?.setPreset('tornado')),
+      true,
+    )
+    await page.waitForFunction(
+      () => {
+        const state = globalThis.__threeWindlineDemo?.snapshot()
+        return state?.preset === 'tornado'
+          && state?.curve === 'straight'
+          && Number(state?.windline?.updates) >= 3
+          && Number(state?.windline?.drawCalls) === 1
+          && Number(state?.vortexBody?.updates) >= 3
+          && Number(state?.vortexBody?.drawCalls) === 1
+      },
+      null,
+      { timeout },
+    )
+    const tornado = normalizeSnapshot(await page.evaluate(readDemoSnapshot))
+    assert.equal(tornado.drawCalls, 1)
+    assert.equal(tornado.activeLines, 288)
+    assert.equal(tornado.raw.vortexBody.count, 144)
+    assert.equal(tornado.raw.vortexBody.segments, 12)
+    assert.equal(tornado.raw.vortexBody.drawCalls, 1)
+    assert.equal(tornado.raw.vortexBody.triangles, 144 * 12 * 2)
+    assert.equal(tornado.raw.vortexBody.dynamicInstanceUploads, 0)
+
+    for (const [preset, activeLines] of [
+      ['water', 304],
+      ['fire', 320],
+    ]) {
+      assert.equal(
+        await page.evaluate(
+          value => globalThis.__threeWindlineDemo?.setPreset(value),
+          preset,
+        ),
+        true,
+      )
+      await page.waitForFunction(
+        ([expectedPreset, expectedLines]) => {
+          const state = globalThis.__threeWindlineDemo?.snapshot()
+          return state?.preset === expectedPreset
+            && Number(state?.windline?.count) === expectedLines
+            && Number(state?.windline?.drawCalls) === 1
+            && Number(state?.vortexBody?.count) === 144
+            && Number(state?.vortexBody?.drawCalls) === 1
+        },
+        [preset, activeLines],
+        { timeout },
+      )
+    }
+
+    const vortexPositionBeforeClick = await page.evaluate(
+      () => globalThis.__threeWindlineDemo?.scene
+        .getObjectByName('windline-demo-vortex-guide')
+        ?.position.toArray(),
+    )
+    assert.ok(Array.isArray(vortexPositionBeforeClick))
+    await page.mouse.click(1_000, 650)
+    await page.waitForFunction(
+      before => {
+        const position = globalThis.__threeWindlineDemo?.scene
+          .getObjectByName('windline-demo-vortex-guide')
+          ?.position
+        if (!position) return false
+        return Math.hypot(
+          position.x - before[0],
+          position.z - before[2],
+        ) > 0.5
+      },
+      vortexPositionBeforeClick,
+      { timeout },
+    )
+
+    assert.equal(
       await page.evaluate(() => globalThis.__threeWindlineDemo?.setPreset('breeze')),
       true,
+    )
+    await page.waitForFunction(
+      () => {
+        const state = globalThis.__threeWindlineDemo?.snapshot()
+        return state?.preset === 'breeze'
+          && Number(state?.vortexBody?.count) === 0
+          && Number(state?.vortexBody?.drawCalls) === 0
+      },
+      null,
+      { timeout },
     )
 
     let shaderBudget
@@ -266,6 +349,7 @@ async function runVariant(browser, backend) {
         return globalThis.__THREE_WINDLINE_SHADERS__
           .filter(shader => shader.label.includes('three-windline-gpu-ribbon-material'))
           .map(shader => ({
+            label: shader.label,
             stage: shader.label.startsWith('vertex') ? 'vertex' : 'fragment',
             bytes: shader.code.length,
             sin: count(shader.code, 'sin('),
@@ -274,12 +358,41 @@ async function runVariant(browser, backend) {
             readsInstanceSeed: shader.code.includes('aWindSeed'),
           }))
       })
-      const vertexShaders = shaderBudget.filter(shader => shader.stage === 'vertex')
-      const fragmentShaders = shaderBudget.filter(shader => shader.stage === 'fragment')
-      assert.equal(vertexShaders.length, curves.length)
-      assert.equal(fragmentShaders.length, curves.length)
-      assert.ok(vertexShaders.every(shader => shader.bytes < 10_000))
-      assert.ok(vertexShaders.every(shader => shader.normalize <= 7))
+      const uniqueShaders = [...new Map(
+        shaderBudget.map(shader => [`${shader.stage}:${shader.label}`, shader]),
+      ).values()]
+      const vertexShaders = uniqueShaders.filter(shader => shader.stage === 'vertex')
+      const fragmentShaders = uniqueShaders.filter(shader => shader.stage === 'fragment')
+      assert.equal(
+        vertexShaders.length,
+        curves.length + 2,
+        `unexpected vertex shaders: ${vertexShaders.map(shader => shader.label).join(', ')}`,
+      )
+      assert.equal(
+        fragmentShaders.length,
+        curves.length + 2,
+        `unexpected fragment shaders: ${fragmentShaders.map(shader => shader.label).join(', ')}`,
+      )
+      const affineVertexShaders = vertexShaders.filter(
+        shader => shader.label.includes('-affine-') && shader.label.includes('-camera'),
+      )
+      const vortexCameraVertexShaders = vertexShaders.filter(
+        shader => shader.label.includes('-vortex-') && shader.label.includes('-camera'),
+      )
+      const vortexRadialVertexShaders = vertexShaders.filter(
+        shader => shader.label.includes('-vortex-') && shader.label.includes('-radial'),
+      )
+      assert.equal(affineVertexShaders.length, curves.length)
+      assert.equal(vortexCameraVertexShaders.length, 1)
+      assert.equal(vortexRadialVertexShaders.length, 1)
+      assert.ok(affineVertexShaders.every(shader => shader.bytes < 10_000))
+      assert.ok(vortexCameraVertexShaders.every(shader => shader.bytes < 16_000))
+      assert.ok(vortexRadialVertexShaders.every(shader => shader.bytes < 18_000))
+      assert.ok(
+        [...affineVertexShaders, ...vortexCameraVertexShaders]
+          .every(shader => shader.normalize <= 7),
+      )
+      assert.ok(vortexRadialVertexShaders.every(shader => shader.normalize <= 9))
       assert.ok(fragmentShaders.every(shader => shader.bytes < 2_000))
       assert.ok(fragmentShaders.every(shader => (
         shader.sin === 0
@@ -288,8 +401,18 @@ async function runVariant(browser, backend) {
         && shader.readsInstanceSeed === false
       )), 'windline path math leaked into the fragment shader')
       assert.deepEqual(
-        vertexShaders.map(shader => shader.sin + shader.cos),
+        affineVertexShaders.map(shader => shader.sin + shader.cos),
         [4, 0, 2, 2, 2, 2],
+      )
+      assert.ok(
+        [...vortexCameraVertexShaders, ...vortexRadialVertexShaders]
+          .every(shader => shader.sin + shader.cos >= 8),
+        'vortex program did not compile its analytic spiral path',
+      )
+      assert.equal(
+        vortexCameraVertexShaders[0].sin + vortexCameraVertexShaders[0].cos,
+        vortexRadialVertexShaders[0].sin + vortexRadialVertexShaders[0].cos,
+        'camera and radial ribbons must share the same vortex path',
       )
     }
 
@@ -360,6 +483,8 @@ async function runVariant(browser, backend) {
       renderer: final.renderer,
       frame: final.frame,
       compiledCurves,
+      compiledPrograms: ['affine', 'vortex'],
+      compiledRibbonModes: ['camera', 'radial'],
       shaderBudget,
       stats: final.raw.stats ?? final.raw.windline,
       deviceScaleFactor: initialSizing.dpr,

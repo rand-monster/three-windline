@@ -147,7 +147,7 @@ button {
 
 .preset-switcher {
   display: flex;
-  min-width: 504px;
+  min-width: 674px;
   height: 44px;
   align-items: center;
   justify-content: center;
@@ -184,6 +184,10 @@ button {
   background: #193a32;
   box-shadow: 0 4px 12px rgba(20, 47, 40, 0.19);
   color: #f5f9f4;
+}
+
+.is-vortex-targeting canvas {
+  cursor: crosshair;
 }
 
 .command-bar {
@@ -629,20 +633,21 @@ button {
 }
 
 @media (max-width: 1180px) {
+  .brand-name,
   .brand-version {
     display: none;
   }
 
   .topbar {
-    grid-template-columns: minmax(180px, 1fr) auto minmax(150px, 1fr);
+    grid-template-columns: minmax(72px, 1fr) auto minmax(142px, 1fr);
   }
 
   .preset-switcher {
-    min-width: 470px;
+    min-width: 620px;
   }
 
   .preset-button {
-    padding-inline: 14px;
+    padding-inline: 11px;
   }
 }
 

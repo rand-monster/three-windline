@@ -15,6 +15,7 @@ import {
   applyWindLineStyle,
   createWindLineMaterial,
 } from './material.js'
+import type { WindLineMaterialUniforms } from './material.js'
 import { createWindLineSeedData } from './seed.js'
 import {
   clamp,
@@ -25,6 +26,7 @@ import {
 } from './internal/math.js'
 import type {
   WindField,
+  WindFieldProgram,
   WindLineFrame,
   WindLineOptions,
   WindLineStats,
@@ -37,6 +39,8 @@ import type {
 class WindLineSystemImpl implements WindLineSystem {
   readonly mesh
   readonly curve
+  readonly program
+  readonly ribbonMode
   readonly capacity
 
   #count: number
@@ -58,9 +62,17 @@ class WindLineSystemImpl implements WindLineSystem {
     const resolved = resolveWindLineOptions(options)
     this.capacity = resolved.capacity
     this.curve = resolved.curve
+    this.ribbonMode = resolved.ribbonMode
     this.#count = resolved.count
     this.#segments = resolved.segments
     this.#field = validateField(resolved.field ?? new UniformWindField())
+    this.program = resolveFieldProgram(this.#field)
+    if (this.program === 'vortex' && this.curve !== 'straight') {
+      throw new RangeError('VortexWindField requires curve: "straight"')
+    }
+    if (this.ribbonMode === 'radial' && this.program !== 'vortex') {
+      throw new RangeError('radial ribbons require a VortexWindField')
+    }
     this.#style = resolved.style
 
     const seeds = createWindLineSeedData(resolved.capacity, resolved.seed)
@@ -74,7 +86,10 @@ class WindLineSystemImpl implements WindLineSystem {
     const bundle = createWindLineMaterial(
       resolved.style,
       resolved.curve,
+      this.program,
+      resolved.ribbonMode,
       resolved.depthTest,
+      resolved.depthWrite,
       resolved.blending,
     )
     this.#uniforms = bundle.uniforms
@@ -107,7 +122,14 @@ class WindLineSystemImpl implements WindLineSystem {
 
   setField(field: WindField): void {
     this.#assertAlive()
-    this.#field = validateField(field)
+    const resolved = validateField(field)
+    const program = resolveFieldProgram(resolved)
+    if (program !== this.program) {
+      throw new RangeError(
+        `cannot change field program from ${this.program} to ${program}; rebuild the system`,
+      )
+    }
+    this.#field = resolved
   }
 
   setStyle(input: WindLineStyleInput): void {
@@ -128,6 +150,10 @@ class WindLineSystemImpl implements WindLineSystem {
     const observerVelocity = this.#uniforms.observerVelocity.value
     const jacobian = this.#uniforms.jacobian.value
     copyVec3(center, frame.anchor)
+    if (this.program === 'vortex') {
+      applyVortexProgram(this.#field, this.#uniforms)
+      copyVec3(center, getVortexField(this.#field).center)
+    }
     copyVec3(observerVelocity, frame.observerVelocity)
     frame.camera.getWorldPosition(eye)
     if (frame.forward !== undefined) copyVec3(forward, frame.forward)
@@ -212,7 +238,92 @@ function validateField(field: WindField): WindField {
   if (!field || typeof field.sample !== 'function') {
     throw new TypeError('field must implement sample(position, timeSeconds, out)')
   }
+  resolveFieldProgram(field)
   return field
+}
+
+function resolveFieldProgram(field: WindField): WindFieldProgram {
+  const program = field.program ?? 'affine'
+  if (program !== 'affine' && program !== 'vortex') {
+    throw new RangeError('field.program must be "affine" or "vortex"')
+  }
+  if (program === 'vortex') getVortexField(field)
+  return program
+}
+
+interface VortexProgramField extends WindField {
+  readonly program: 'vortex'
+  readonly center: Vector3
+  readonly baseVelocity: Vector3
+  readonly envelope: {
+    readonly height: number
+    readonly radius: readonly [number, number]
+    readonly taperExponent: number
+    readonly shellBias: number
+    readonly coreRadiusRatio: number
+    readonly axisControl: readonly [number, number]
+    readonly axisTip: readonly [number, number]
+    readonly axisWander: number
+  }
+  readonly angularSpeed: number
+  readonly radialInflow: number
+  readonly lift: number
+  readonly softeningRadius: number
+}
+
+function getVortexField(field: WindField): VortexProgramField {
+  const candidate = field as Partial<VortexProgramField>
+  const envelope = candidate.envelope
+  if (
+    candidate.program !== 'vortex'
+    || !(candidate.center instanceof Vector3)
+    || !(candidate.baseVelocity instanceof Vector3)
+    || !envelope
+    || !Array.isArray(envelope.radius)
+  ) {
+    throw new TypeError('vortex fields must provide VortexWindField program parameters')
+  }
+  return candidate as VortexProgramField
+}
+
+function applyVortexProgram(
+  source: WindField,
+  uniforms: WindLineMaterialUniforms,
+): void {
+  const field = getVortexField(source)
+  const envelope = field.envelope
+  const baseRadius = finite(envelope.radius[0], 0.8)
+  const topRadius = finite(envelope.radius[1], 8)
+  const contraction = Math.max(
+    0,
+    finite(field.radialInflow, 0) / Math.max(
+      0.001,
+      finite(field.softeningRadius, topRadius),
+      topRadius,
+    ),
+  )
+  uniforms.vortexShape.value.set(
+    Math.max(0.001, finite(envelope.height, 24)),
+    Math.max(0.001, baseRadius),
+    Math.max(baseRadius + 0.001, topRadius),
+    clamp(finite(envelope.taperExponent, 0.72), 0.2, 4),
+  )
+  uniforms.vortexMotion.value.set(
+    Math.max(0, finite(field.angularSpeed, 1.4)),
+    contraction,
+    Math.max(0.1, finite(field.baseVelocity.y + field.lift, 4.5)),
+    clamp(finite(envelope.coreRadiusRatio, 0.12), 0.01, 0.5),
+  )
+  uniforms.vortexDetail.value.set(
+    clamp(finite(envelope.shellBias, 0.76), 0, 1),
+    Math.max(0, finite(envelope.axisWander, 0.8)),
+  )
+  uniforms.vortexAxis.value.set(
+    finite(envelope.axisControl[0], 1.4),
+    finite(envelope.axisControl[1], -0.7),
+    finite(envelope.axisTip[0], -1),
+    finite(envelope.axisTip[1], 1.1),
+  )
 }
 
 function sanitizeVector(vector: Vector3): void {

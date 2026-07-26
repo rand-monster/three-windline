@@ -1,8 +1,44 @@
 import * as THREE from 'three/webgpu'
+import {
+  abs,
+  attribute,
+  clamp,
+  cos,
+  float,
+  fract,
+  instanceIndex,
+  mix,
+  positionLocal,
+  sin,
+  smoothstep as tslSmoothstep,
+  uniform,
+  uv,
+  vec3,
+  vertexStage,
+} from 'three/tsl'
 
-export type DemoPresetId = 'breeze' | 'shear' | 'tornado' | 'storm'
+export const VORTEX_PRESET_IDS = Object.freeze([
+  'tornado',
+  'water',
+  'fire',
+] as const)
+
+export type DemoVortexPresetId = (typeof VORTEX_PRESET_IDS)[number]
+export type DemoPresetId = 'breeze' | 'shear' | DemoVortexPresetId | 'storm'
+
+export function isVortexPreset(preset: DemoPresetId): preset is DemoVortexPresetId {
+  return VORTEX_PRESET_IDS.includes(preset as DemoVortexPresetId)
+}
 
 type DisposableMaterial = THREE.Material & { map?: THREE.Texture | null }
+
+export interface DemoVortexLook {
+  readonly height: number
+  readonly topRadius: number
+  readonly axisBend: number
+  readonly axisWander: number
+  readonly volume: number
+}
 
 export interface DemoWorld {
   readonly root: THREE.Group
@@ -10,6 +46,8 @@ export interface DemoWorld {
   readonly forward: THREE.Vector3
   readonly vortexCenter: THREE.Vector3
   setPreset(preset: DemoPresetId): void
+  setVortexLook(look: DemoVortexLook): void
+  setVortexTarget(point: THREE.Vector3): boolean
   update(timeSeconds: number, deltaSeconds: number): void
   dispose(): void
 }
@@ -17,6 +55,23 @@ export interface DemoWorld {
 const TERRAIN_SIZE = 280
 const TERRAIN_SEGMENTS = 176
 const TAU = Math.PI * 2
+const TERRAIN_LOW = new THREE.Color(0x557b4f)
+const TERRAIN_MEADOW = new THREE.Color(0x80a953)
+const TERRAIN_MOSS = new THREE.Color(0x3f7b50)
+const TERRAIN_SUN_GRASS = new THREE.Color(0xb4c85d)
+const TERRAIN_STRAW = new THREE.Color(0xc5ae62)
+const TERRAIN_STONE = new THREE.Color(0x6d7e68)
+
+export const DEMO_VORTEX_ENVELOPE = Object.freeze({
+  height: 26,
+  radius: Object.freeze([0.7, 9.6] as const),
+  taperExponent: 0.68,
+  shellBias: 0.64,
+  coreRadiusRatio: 0.12,
+  axisControl: Object.freeze([4.5, -2.2] as const),
+  axisTip: Object.freeze([-3, 2.8] as const),
+  axisWander: 1.45,
+})
 
 function smoothstep(minimum: number, maximum: number, value: number): number {
   const phase = THREE.MathUtils.clamp(
@@ -74,6 +129,59 @@ export function terrainHeightAt(x: number, z: number): number {
   return longWave + detail + shoulders + channel + distantRise - 2
 }
 
+function terrainSurfaceColorAt(
+  x: number,
+  z: number,
+  height: number,
+  out: THREE.Color,
+): THREE.Color {
+  const broadPatch = fbm(x * 0.018 + 11.4, z * 0.018 - 6.2)
+  const mossPatch = fbm(x * 0.052 - 4.7, z * 0.052 + 18.1)
+  const warmPatch = fbm(x * 0.031 + 32.5, z * 0.031 - 21.7)
+  const stoneMix = smoothstep(
+    8,
+    26,
+    height + (fbm(x * 0.08, z * 0.08) - 0.5) * 8,
+  )
+  out.copy(TERRAIN_LOW).lerp(TERRAIN_MEADOW, smoothstep(-6, 4, height))
+  out.lerp(TERRAIN_MOSS, smoothstep(0.56, 0.78, mossPatch) * 0.38)
+  out.lerp(TERRAIN_SUN_GRASS, smoothstep(0.5, 0.76, broadPatch) * 0.56)
+  out.lerp(TERRAIN_STRAW, smoothstep(0.68, 0.86, warmPatch) * 0.22)
+  out.lerp(TERRAIN_STONE, stoneMix * 0.68)
+  return out
+}
+
+function terrainTextureColorAt(x: number, z: number, out: THREE.Color): THREE.Color {
+  const textureX = THREE.MathUtils.euclideanModulo(
+    (x / TERRAIN_SIZE + 0.5) * 12,
+    1,
+  ) * 256
+  const textureY = THREE.MathUtils.euclideanModulo(
+    (0.5 - z / TERRAIN_SIZE) * 12,
+    1,
+  ) * 256
+  const broad = fbm(textureX * 0.035 + 19, textureY * 0.035 - 12)
+  const fine = hash2(textureX * 0.73, textureY * 0.73)
+  const fiber = Math.sin((textureX + broad * 34) * 0.42) * 0.5 + 0.5
+  const warmPatch = smoothstep(0.56, 0.78, broad)
+  const coolPatch = smoothstep(0.2, 0.46, broad)
+  const shade = (broad - 0.5) * 22 + (fine - 0.5) * 9 + fiber * 4
+  return out.setRGB(
+    THREE.MathUtils.clamp(142 + shade + warmPatch * 22, 0, 255) / 255,
+    THREE.MathUtils.clamp(
+      178 + shade + warmPatch * 15 + coolPatch * 5,
+      0,
+      255,
+    ) / 255,
+    THREE.MathUtils.clamp(
+      101 + shade * 0.72 + coolPatch * 16 - warmPatch * 5,
+      0,
+      255,
+    ) / 255,
+    THREE.SRGBColorSpace,
+  )
+}
+
 function mulberry32(seed: number): () => number {
   let state = seed >>> 0
   return () => {
@@ -99,11 +207,21 @@ function createTerrainTexture(): THREE.CanvasTexture {
       const broad = fbm(x * 0.035 + 19, y * 0.035 - 12)
       const fine = hash2(x * 0.73, y * 0.73)
       const fiber = Math.sin((x + broad * 34) * 0.42) * 0.5 + 0.5
-      const shade = (broad - 0.5) * 25 + (fine - 0.5) * 11 + fiber * 4
+      const warmPatch = smoothstep(0.56, 0.78, broad)
+      const coolPatch = smoothstep(0.2, 0.46, broad)
+      const shade = (broad - 0.5) * 22 + (fine - 0.5) * 9 + fiber * 4
       const offset = (y * size + x) * 4
-      data[offset] = THREE.MathUtils.clamp(142 + shade, 0, 255)
-      data[offset + 1] = THREE.MathUtils.clamp(177 + shade, 0, 255)
-      data[offset + 2] = THREE.MathUtils.clamp(112 + shade * 0.7, 0, 255)
+      data[offset] = THREE.MathUtils.clamp(142 + shade + warmPatch * 22, 0, 255)
+      data[offset + 1] = THREE.MathUtils.clamp(
+        178 + shade + warmPatch * 15 + coolPatch * 5,
+        0,
+        255,
+      )
+      data[offset + 2] = THREE.MathUtils.clamp(
+        101 + shade * 0.72 + coolPatch * 16 - warmPatch * 5,
+        0,
+        255,
+      )
       data[offset + 3] = 255
     }
   }
@@ -117,7 +235,77 @@ function createTerrainTexture(): THREE.CanvasTexture {
   return texture
 }
 
-function createTerrain(): THREE.Mesh {
+function createSkyTexture(): THREE.CanvasTexture {
+  const width = 768
+  const height = 384
+  const canvas = document.createElement('canvas')
+  canvas.width = width
+  canvas.height = height
+  const context = canvas.getContext('2d', { alpha: false })
+  if (!context) throw new Error('Unable to create sky texture')
+  const image = context.createImageData(width, height)
+  const data = image.data
+  for (let y = 0; y < height; y += 1) {
+    const vertical = y / (height - 1)
+    const cloudBand = THREE.MathUtils.lerp(
+      0.76,
+      1,
+      smoothstep(0.08, 0.42, vertical),
+    ) * (1 - smoothstep(0.82, 0.98, vertical))
+    for (let x = 0; x < width; x += 1) {
+      const horizontal = x / width
+      const broad = fbm(x * 0.009 + 17.3, y * 0.015 - 4.7)
+      const detail = fbm(x * 0.028 - 8.2, y * 0.041 + 12.4)
+      const ridge = fbm(x * 0.005 + 31.2, y * 0.024 + 3.5)
+      const cloudField = broad * 0.62 + detail * 0.23 + ridge * 0.15
+      const cloud = smoothstep(0.39, 0.59, cloudField) * cloudBand
+      const underside = smoothstep(0.44, 0.68, ridge)
+      const horizon = smoothstep(0.42, 0.92, vertical)
+      const sunDistance = (
+        (horizontal - 0.16) * (horizontal - 0.16) * 7
+        + (vertical - 0.61) * (vertical - 0.61) * 18
+      )
+      const sunGlow = Math.exp(-sunDistance * 5.5)
+
+      let red = THREE.MathUtils.lerp(92, 174, horizon)
+      let green = THREE.MathUtils.lerp(133, 188, horizon)
+      let blue = THREE.MathUtils.lerp(143, 181, horizon)
+      const cloudLight = THREE.MathUtils.clamp(
+        0.38 + (broad - ridge) * 1.8 + sunGlow * 0.58,
+        0,
+        1,
+      )
+      const cloudRed = THREE.MathUtils.lerp(104, 232, cloudLight)
+      const cloudGreen = THREE.MathUtils.lerp(126, 231, cloudLight)
+      const cloudBlue = THREE.MathUtils.lerp(130, 211, cloudLight)
+      const cloudStrength = cloud * THREE.MathUtils.lerp(0.66, 0.92, underside)
+      red = THREE.MathUtils.lerp(red, cloudRed, cloudStrength)
+      green = THREE.MathUtils.lerp(green, cloudGreen, cloudStrength)
+      blue = THREE.MathUtils.lerp(blue, cloudBlue, cloudStrength)
+      red += sunGlow * 48
+      green += sunGlow * 35
+      blue += sunGlow * 14
+
+      const offset = (y * width + x) * 4
+      data[offset] = THREE.MathUtils.clamp(red, 0, 255)
+      data[offset + 1] = THREE.MathUtils.clamp(green, 0, 255)
+      data[offset + 2] = THREE.MathUtils.clamp(blue, 0, 255)
+      data[offset + 3] = 255
+    }
+  }
+  context.putImageData(image, 0, 0)
+  const texture = new THREE.CanvasTexture(canvas)
+  texture.name = 'windline-demo-procedural-cloud-sky'
+  texture.mapping = THREE.EquirectangularReflectionMapping
+  texture.wrapS = THREE.RepeatWrapping
+  texture.wrapT = THREE.ClampToEdgeWrapping
+  texture.colorSpace = THREE.SRGBColorSpace
+  texture.minFilter = THREE.LinearFilter
+  texture.magFilter = THREE.LinearFilter
+  return texture
+}
+
+function createTerrain(terrainTexture: THREE.CanvasTexture): THREE.Mesh {
   const geometry = new THREE.PlaneGeometry(
     TERRAIN_SIZE,
     TERRAIN_SIZE,
@@ -127,20 +315,13 @@ function createTerrain(): THREE.Mesh {
   geometry.rotateX(-Math.PI * 0.5)
   const position = geometry.getAttribute('position')
   const colors = new Float32Array(position.count * 3)
-  const low = new THREE.Color(0x4f7557)
-  const meadow = new THREE.Color(0x78a75c)
-  const stone = new THREE.Color(0x66766b)
-  const sunGrass = new THREE.Color(0x9bbf58)
   const color = new THREE.Color()
   for (let index = 0; index < position.count; index += 1) {
     const x = position.getX(index)
     const z = position.getZ(index)
     const height = terrainHeightAt(x, z)
     position.setY(index, height)
-    const stoneMix = smoothstep(8, 26, height + (fbm(x * 0.08, z * 0.08) - 0.5) * 8)
-    color.copy(low).lerp(meadow, smoothstep(-6, 4, height))
-    color.lerp(stone, stoneMix * 0.68)
-    color.lerp(sunGrass, smoothstep(-0.1, 0.75, fbm(x * 0.026 + 11, z * 0.026)))
+    terrainSurfaceColorAt(x, z, height, color)
     colors[index * 3] = color.r
     colors[index * 3 + 1] = color.g
     colors[index * 3 + 2] = color.b
@@ -151,7 +332,7 @@ function createTerrain(): THREE.Mesh {
   geometry.computeBoundingSphere()
 
   const material = new THREE.MeshStandardMaterial({
-    map: createTerrainTexture(),
+    map: terrainTexture,
     vertexColors: true,
     color: 0xffffff,
     roughness: 0.94,
@@ -208,16 +389,174 @@ function createRockField(): THREE.InstancedMesh {
   return rocks
 }
 
-function createGrassField(): THREE.InstancedMesh {
-  const count = 1_800
-  const geometry = new THREE.ConeGeometry(0.055, 0.9, 3, 1)
-  geometry.translate(0, 0.45, 0)
-  const material = new THREE.MeshStandardMaterial({
-    color: 0xbfd698,
-    roughness: 0.9,
+function createGrassBladeGeometry(): THREE.BufferGeometry {
+  const segments = 9
+  const planes = 2
+  const verticesPerPlane = (segments + 1) * 2
+  const positions = new Float32Array(planes * verticesPerPlane * 3)
+  const uvs = new Float32Array(planes * verticesPerPlane * 2)
+  const indices = new Uint16Array(planes * segments * 6)
+  let vertex = 0
+  let uvIndex = 0
+  let triangle = 0
+  for (let plane = 0; plane < planes; plane += 1) {
+    const planeStart = plane * verticesPerPlane
+    for (let row = 0; row <= segments; row += 1) {
+      const heightPhase = row / segments
+      const halfWidth = 0.15 * (1 - heightPhase ** 1.45) + 0.005
+      const crownLean = heightPhase ** 2 * 0.075
+      for (let side = 0; side < 2; side += 1) {
+        const cross = side === 0 ? -halfWidth : halfWidth
+        if (plane === 0) {
+          positions[vertex] = cross
+          positions[vertex + 1] = heightPhase
+          positions[vertex + 2] = crownLean
+        } else {
+          positions[vertex] = -crownLean
+          positions[vertex + 1] = heightPhase
+          positions[vertex + 2] = cross
+        }
+        uvs[uvIndex] = side
+        uvs[uvIndex + 1] = heightPhase
+        vertex += 3
+        uvIndex += 2
+      }
+      if (row < segments) {
+        const current = planeStart + row * 2
+        indices[triangle] = current
+        indices[triangle + 1] = current + 2
+        indices[triangle + 2] = current + 1
+        indices[triangle + 3] = current + 1
+        indices[triangle + 4] = current + 2
+        indices[triangle + 5] = current + 3
+        triangle += 6
+      }
+    }
+  }
+  const geometry = new THREE.BufferGeometry()
+  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
+  geometry.setAttribute('uv', new THREE.BufferAttribute(uvs, 2))
+  geometry.setIndex(new THREE.BufferAttribute(indices, 1))
+  geometry.computeVertexNormals()
+  geometry.computeBoundingSphere()
+  return geometry
+}
+
+function createGrassField() {
+  const count = 36_000
+  const geometry = createGrassBladeGeometry()
+  const flexValues = new Float32Array(count)
+  const colorValues = new Float32Array(count * 3)
+  const grassFlex = attribute<'float'>('aGrassFlex', 'float')
+  const grassColor = attribute<'vec3'>('aGrassColor', 'vec3')
+  const time = uniform(0)
+  const preset = uniform(0)
+  const vortexTopRadius = uniform(DEMO_VORTEX_ENVELOPE.radius[1])
+  const vortexCenter = uniform(new THREE.Vector2(0, 8))
+  const material = new THREE.MeshStandardNodeMaterial({
+    color: 0xffffff,
+    roughness: 0.6,
     metalness: 0,
     side: THREE.DoubleSide,
   })
+  material.name = 'windline-demo-gpu-grass-material'
+
+  const bladePhase = uv().y
+  const bendPhase = bladePhase.mul(bladePhase)
+  const tipPhase = bendPhase.mul(bladePhase)
+  const instance = float(instanceIndex)
+  const rootX = positionLocal.x
+  const rootZ = positionLocal.z
+  const gust = sin(
+    time.mul(1.18)
+      .add(rootX.mul(0.115))
+      .add(rootZ.mul(0.073))
+      .add(instance.mul(0.037)),
+  ).mul(0.18).add(
+    sin(
+      time.mul(2.07)
+        .sub(rootX.mul(0.043))
+        .add(rootZ.mul(0.19))
+        .add(instance.mul(0.011)),
+    ).mul(0.08),
+  ).add(0.82)
+
+  const breezeWeight = float(1).sub(clamp(abs(preset), 0, 1))
+  const shearWeight = float(1).sub(clamp(abs(preset.sub(1)), 0, 1))
+  const tornadoWeight = float(1).sub(clamp(abs(preset.sub(2)), 0, 1))
+  const stormWeight = float(1).sub(clamp(abs(preset.sub(3)), 0, 1))
+
+  const vortexX = rootX.sub(vortexCenter.x)
+  const vortexZ = rootZ.sub(vortexCenter.y)
+  const vortexRadius = vortexX
+    .mul(vortexX)
+    .add(vortexZ.mul(vortexZ))
+    .add(0.16)
+    .sqrt()
+  const inverseRadius = float(1).div(vortexRadius)
+  const vortexFalloff = float(1).sub(tslSmoothstep(
+    vortexTopRadius.mul(0.52),
+    vortexTopRadius.mul(3.96),
+    vortexRadius,
+  ))
+  const vortexTangentX = vortexZ.negate().mul(inverseRadius)
+  const vortexTangentZ = vortexX.mul(inverseRadius)
+  const vortexInwardX = vortexX.negate().mul(inverseRadius)
+  const vortexInwardZ = vortexZ.negate().mul(inverseRadius)
+  const vortexStrength = vortexFalloff.mul(1.62).add(0.08)
+  const windX = breezeWeight.mul(0.42 * 0.95)
+    .add(shearWeight.mul(0.76 * 0.68))
+    .add(stormWeight.mul(1.08 * 0.78))
+    .add(
+      tornadoWeight.mul(
+        vortexTangentX
+          .add(vortexInwardX.mul(0.28))
+          .mul(vortexStrength),
+      ),
+    )
+  const windZ = breezeWeight.mul(0.42 * 0.31)
+    .add(shearWeight.mul(0.76 * 0.74))
+    .add(stormWeight.mul(1.08 * 0.63))
+    .add(
+      tornadoWeight.mul(
+        vortexTangentZ
+          .add(vortexInwardZ.mul(0.28))
+          .mul(vortexStrength),
+      ),
+    )
+  const windLength = windX.mul(windX).add(windZ.mul(windZ)).add(0.01).sqrt()
+  const flutter = sin(
+    time.mul(3.1)
+      .add(instance.mul(1.91))
+      .add(bladePhase.mul(4.8)),
+  ).mul(tipPhase).mul(0.055)
+  const bendX = windX.mul(gust).mul(bendPhase).mul(grassFlex)
+    .add(windZ.negate().div(windLength).mul(flutter))
+  const bendZ = windZ.mul(gust).mul(bendPhase).mul(grassFlex)
+    .add(windX.div(windLength).mul(flutter))
+  const bendDrop = windLength
+    .mul(gust)
+    .mul(bendPhase)
+    .mul(grassFlex)
+    .mul(-0.13)
+  material.positionNode = positionLocal.add(vec3(bendX, bendDrop, bendZ))
+
+  const tipLift = vec3(1.6, 1.7, 0.96)
+  const heightColor = mix(
+    vec3(1),
+    tipLift,
+    tslSmoothstep(0.18, 1, bladePhase),
+  )
+  const sunFleck = sin(instance.mul(2.399).add(rootX.mul(0.31)))
+    .mul(0.5)
+    .add(0.5)
+  material.colorNode = grassColor.mul(heightColor).mul(
+    mix(1, mix(0.9, 1.12, sunFleck), tipPhase),
+  )
+  material.emissiveNode = grassColor.mul(
+    mix(0.82, 0.16, tslSmoothstep(0, 0.76, bladePhase)),
+  )
+
   const grass = new THREE.InstancedMesh(geometry, material, count)
   grass.name = 'windline-demo-grass'
   grass.castShadow = false
@@ -228,24 +567,40 @@ function createGrassField(): THREE.InstancedMesh {
   const quaternion = new THREE.Quaternion()
   const scale = new THREE.Vector3()
   const tint = new THREE.Color()
+  const textureTint = new THREE.Color()
   for (let index = 0; index < count; index += 1) {
-    const z = (random() - 0.5) * 240
+    const z = (random() - 0.5) * 248
     const center = -Math.sin(z * 0.021) * 7
-    const spread = (random() - 0.5) * 118
+    const spread = (random() - 0.5) * 176
     const x = center + spread
     const y = terrainHeightAt(x, z)
-    const size = 0.55 + random() * 0.9
+    const size = 1.45 + random() ** 0.72 * 2.6
     position.set(x, y, z)
     quaternion.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, random() * TAU)
-    scale.set(size * (0.65 + random() * 0.5), size, size * (0.65 + random() * 0.5))
+    const width = 0.82 + random() * 0.73
+    scale.set(width, size, width)
     matrix.compose(position, quaternion, scale)
     grass.setMatrixAt(index, matrix)
-    tint.setHSL(0.22 + random() * 0.075, 0.3 + random() * 0.22, 0.37 + random() * 0.16)
-    grass.setColorAt(index, tint)
+    flexValues[index] = 0.72 + size * 0.2 + random() * 0.08
+    terrainSurfaceColorAt(x, z, y, tint).multiply(
+      terrainTextureColorAt(x, z, textureTint),
+    )
+    colorValues[index * 3] = tint.r
+    colorValues[index * 3 + 1] = tint.g
+    colorValues[index * 3 + 2] = tint.b
   }
   grass.instanceMatrix.needsUpdate = true
-  if (grass.instanceColor) grass.instanceColor.needsUpdate = true
-  return grass
+  geometry.setAttribute(
+    'aGrassFlex',
+    new THREE.InstancedBufferAttribute(flexValues, 1),
+  )
+  geometry.setAttribute(
+    'aGrassColor',
+    new THREE.InstancedBufferAttribute(colorValues, 3),
+  )
+  grass.computeBoundingSphere()
+  if (grass.boundingSphere) grass.boundingSphere.radius += 8
+  return { mesh: grass, time, preset, vortexTopRadius, vortexCenter }
 }
 
 function createDistantRidge(
@@ -380,90 +735,75 @@ function createWindSculpture(): {
   return { group, rings, vane }
 }
 
-function createVortexGuide(): {
-  group: THREE.Group
-  rings: THREE.Mesh[]
-  dust: THREE.Points
-} {
+function createVortexGuide() {
   const group = new THREE.Group()
   group.name = 'windline-demo-vortex-guide'
   const ground = terrainHeightAt(0, 8)
-  group.position.set(0, ground + 0.2, 8)
+  group.position.set(0, ground + 0.25, 8)
   group.visible = false
-  const material = new THREE.MeshBasicMaterial({
-    color: 0xf1d8b0,
-    transparent: true,
-    opacity: 0.16,
-    depthWrite: false,
-    side: THREE.DoubleSide,
-  })
-  const rings: THREE.Mesh[] = []
-  for (let index = 0; index < 6; index += 1) {
-    const phase = index / 5
-    const radius = THREE.MathUtils.lerp(1.7, 6.8, phase)
-    const ring = new THREE.Mesh(new THREE.TorusGeometry(radius, 0.035, 6, 96), material.clone())
-    ring.position.y = phase * 14
-    ring.rotation.x = Math.PI * 0.5 + Math.sin(index * 2.1) * 0.06
-    ring.rotation.y = index * 0.38
-    rings.push(ring)
+  const time = uniform(0)
+  const rings = [2.8, 4.25, 5.9, 7.2].map((radius, index) => {
+    const geometry = new THREE.TorusGeometry(
+      radius,
+      0.045 + index * 0.012,
+      6,
+      96,
+    )
+    geometry.rotateX(Math.PI * 0.5)
+    const material = new THREE.MeshBasicMaterial({
+      color: index % 2 === 0 ? 0xd8f5d5 : 0xffe5b0,
+      transparent: true,
+      opacity: 0.34 - index * 0.045,
+      depthWrite: false,
+      toneMapped: true,
+    })
+    const ring = new THREE.Mesh(geometry, material)
+    ring.name = `windline-demo-vortex-ground-ring-${index}`
+    ring.position.y = 0.08 + index * 0.06
+    ring.renderOrder = 6
     group.add(ring)
-  }
-
-  const count = 180
+    return ring
+  })
+  const count = 640
   const points = new Float32Array(count * 3)
   const random = mulberry32(0x70ad_51f1)
   for (let index = 0; index < count; index += 1) {
-    const y = random() * 16
-    const phase = y / 16
-    const radius = 1.4 + phase * 6.2 + (random() - 0.5) * 1.7
-    const angle = random() * TAU + y * 0.82
-    points[index * 3] = Math.cos(angle) * radius
-    points[index * 3 + 1] = y
-    points[index * 3 + 2] = Math.sin(angle) * radius
+    const radius = 0.9 + Math.sqrt(random()) * 8.4
+    points[index * 3] = radius
+    points[index * 3 + 1] = random()
+    points[index * 3 + 2] = random() * TAU
   }
   const geometry = new THREE.BufferGeometry()
   geometry.setAttribute('position', new THREE.BufferAttribute(points, 3))
-  const dustMaterial = new THREE.PointsMaterial({
-    color: 0xe8c898,
-    size: 0.2,
+  const dustMaterial = new THREE.PointsNodeMaterial({
+    color: 0xd9bf75,
+    size: 1.45,
     sizeAttenuation: true,
     transparent: true,
-    opacity: 0.28,
+    opacity: 0.55,
     depthWrite: false,
   })
+  dustMaterial.name = 'windline-demo-vortex-ground-debris'
+  const dustAge = fract(positionLocal.y.add(time.mul(0.34)))
+  const dustRadius = positionLocal.x.mul(mix(1, 0.2, dustAge))
+  const dustAngle = positionLocal.z.add(time.mul(2.2)).add(dustAge.mul(4.4))
+  dustMaterial.positionNode = vec3(
+    cos(dustAngle).mul(dustRadius),
+    dustAge.mul(4.6),
+    sin(dustAngle).mul(dustRadius),
+  )
+  dustMaterial.opacityNode = vertexStage(
+    float(1).sub(tslSmoothstep(0.68, 1, dustAge)).mul(0.3),
+  )
   const dust = new THREE.Points(geometry, dustMaterial)
+  dust.renderOrder = 7
   group.add(dust)
-  return { group, rings, dust }
-}
-
-function createCloudBank(): THREE.Group {
-  const group = new THREE.Group()
-  group.name = 'windline-demo-cloud-bank'
-  const material = new THREE.MeshStandardMaterial({
-    color: 0xe4eee8,
-    roughness: 1,
-    metalness: 0,
-    transparent: true,
-    opacity: 0.38,
-    depthWrite: false,
-  })
-  const geometry = new THREE.IcosahedronGeometry(1, 2)
-  const random = mulberry32(0xc10d_2026)
-  for (let cluster = 0; cluster < 10; cluster += 1) {
-    const cloud = new THREE.Group()
-    const x = (random() - 0.5) * 250
-    const y = 44 + random() * 24
-    const z = -90 + random() * 220
-    cloud.position.set(x, y, z)
-    for (let lobe = 0; lobe < 4; lobe += 1) {
-      const mesh = new THREE.Mesh(geometry, material)
-      mesh.position.set((random() - 0.5) * 9, (random() - 0.5) * 2.8, (random() - 0.5) * 4)
-      mesh.scale.set(5 + random() * 8, 2 + random() * 3, 3 + random() * 6)
-      cloud.add(mesh)
-    }
-    group.add(cloud)
+  return {
+    group,
+    dust,
+    rings,
+    time,
   }
-  return group
 }
 
 export function createDemoWorld(scene: THREE.Scene): DemoWorld {
@@ -471,20 +811,29 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   root.name = 'windline-demo-world'
   scene.add(root)
 
-  const terrain = createTerrain()
+  const terrainTexture = createTerrainTexture()
+  const terrain = createTerrain(terrainTexture)
   const rocks = createRockField()
   const grass = createGrassField()
   const backRidge = createDistantRidge(-176, 41, 0x6d8f86, 2.1)
   const farRidge = createDistantRidge(-224, 55, 0x789b94, 7.4)
   const sculpture = createWindSculpture()
   const vortex = createVortexGuide()
-  const clouds = createCloudBank()
-  root.add(terrain, rocks, grass, farRidge, backRidge, sculpture.group, vortex.group, clouds)
+  const skyTexture = createSkyTexture()
+  root.add(
+    terrain,
+    rocks,
+    grass.mesh,
+    farRidge,
+    backRidge,
+    sculpture.group,
+    vortex.group,
+  )
 
-  scene.background = new THREE.Color(0x8cb8b7)
+  scene.background = skyTexture
   scene.fog = new THREE.FogExp2(0x90aca4, 0.0037)
-  const hemisphere = new THREE.HemisphereLight(0xd8ece5, 0x34483d, 1.05)
-  const sun = new THREE.DirectionalLight(0xffd19a, 3.1)
+  const hemisphere = new THREE.HemisphereLight(0xd8ece5, 0x34483d, 0.68)
+  const sun = new THREE.DirectionalLight(0xffd19a, 3.8)
   sun.name = 'windline-demo-sun'
   sun.position.set(-52, 82, -38)
   sun.castShadow = true
@@ -497,49 +846,96 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   sun.shadow.camera.far = 220
   sun.shadow.bias = -0.00025
   sun.shadow.normalBias = 0.035
-  const fill = new THREE.DirectionalLight(0x83c3c1, 0.42)
+  const fill = new THREE.DirectionalLight(0x83c3c1, 0.3)
   fill.position.set(62, 32, 48)
   root.add(hemisphere, sun, fill)
 
   const anchor = new THREE.Vector3(0, terrainHeightAt(0, 8) + 3, 8)
   const forward = new THREE.Vector3(0.95, 0.04, 0.31).normalize()
-  const vortexCenter = new THREE.Vector3(0, terrainHeightAt(0, 8) + 2, 8)
+  const vortexCenter = new THREE.Vector3(0, terrainHeightAt(0, 8) + 0.25, 8)
+  const vortexTarget = vortexCenter.clone()
   let currentPreset: DemoPresetId = 'breeze'
-  let targetSunIntensity = 3.1
-  const targetBackground = new THREE.Color(0x8cb8b7)
+  let targetSunIntensity = 3.8
   const targetFog = new THREE.Color(0x90aca4)
   const vaneTarget = new THREE.Vector3(1, 0, 0)
 
+  function setVortexLook(look: DemoVortexLook): void {
+    const height = THREE.MathUtils.clamp(look.height, 12, 48)
+    const topRadius = THREE.MathUtils.clamp(look.topRadius, 3, 18)
+    const radialScale = topRadius / DEMO_VORTEX_ENVELOPE.radius[1]
+    vortex.group.scale.set(
+      radialScale,
+      height / DEMO_VORTEX_ENVELOPE.height,
+      radialScale,
+    )
+    grass.vortexTopRadius.value = topRadius
+  }
+
+  function setVortexTarget(point: THREE.Vector3): boolean {
+    if (
+      !Number.isFinite(point.x)
+      || !Number.isFinite(point.z)
+    ) return false
+    const x = THREE.MathUtils.clamp(point.x, -96, 96)
+    const z = THREE.MathUtils.clamp(point.z, -96, 96)
+    vortexTarget.set(x, terrainHeightAt(x, z) + 0.25, z)
+    return true
+  }
+
   function setPreset(preset: DemoPresetId): void {
     currentPreset = preset
-    vortex.group.visible = preset === 'tornado'
-    sculpture.group.visible = preset !== 'tornado'
+    grass.preset.value = preset === 'breeze'
+      ? 0
+      : preset === 'shear'
+        ? 1
+        : isVortexPreset(preset)
+          ? 2
+          : 3
+    const vortexActive = isVortexPreset(preset)
+    vortex.group.visible = vortexActive
+    sculpture.group.visible = !vortexActive
+    rocks.visible = !vortexActive
     if (preset === 'storm') {
-      targetBackground.set(0x526f78)
       targetFog.set(0x657d7c)
       targetSunIntensity = 1.6
       vaneTarget.set(0.78, 0, 0.63)
     } else if (preset === 'shear') {
-      targetBackground.set(0x81ada8)
       targetFog.set(0x8aa89e)
       targetSunIntensity = 3.35
-      vaneTarget.set(0.68, 0, -0.74)
-    } else if (preset === 'tornado') {
-      targetBackground.set(0x718f8d)
-      targetFog.set(0x81988f)
-      targetSunIntensity = 2.45
+      vaneTarget.set(0.68, 0, 0.74)
+    } else if (preset === 'water') {
+      targetFog.set(0x80abb2)
+      targetSunIntensity = 4.35
       vaneTarget.set(0.2, 0, 0.98)
+      vortex.dust.material.color.set(0x89ddff)
+      for (const [index, ring] of vortex.rings.entries()) {
+        ring.material.color.set(index % 2 === 0 ? 0x91eaff : 0xdffbff)
+      }
+    } else if (preset === 'fire') {
+      targetFog.set(0xa99a82)
+      targetSunIntensity = 4.55
+      vaneTarget.set(0.2, 0, 0.98)
+      vortex.dust.material.color.set(0xff7a24)
+      for (const [index, ring] of vortex.rings.entries()) {
+        ring.material.color.set(index % 2 === 0 ? 0xff8a2b : 0xffdda1)
+      }
+    } else if (preset === 'tornado') {
+      targetFog.set(0x90a99d)
+      targetSunIntensity = 4.2
+      vaneTarget.set(0.2, 0, 0.98)
+      vortex.dust.material.color.set(0xd9bf75)
+      for (const [index, ring] of vortex.rings.entries()) {
+        ring.material.color.set(index % 2 === 0 ? 0xd8f5d5 : 0xffe5b0)
+      }
     } else {
-      targetBackground.set(0x8cb8b7)
       targetFog.set(0x90aca4)
-      targetSunIntensity = 3.1
+      targetSunIntensity = 3.8
       vaneTarget.set(0.95, 0, 0.31)
     }
   }
 
   function update(timeSeconds: number, deltaSeconds: number): void {
     const blend = 1 - Math.exp(-2.8 * Math.min(0.05, deltaSeconds))
-    if (scene.background instanceof THREE.Color) scene.background.lerp(targetBackground, blend)
     if (scene.fog instanceof THREE.FogExp2) scene.fog.color.lerp(targetFog, blend)
     sun.intensity = THREE.MathUtils.lerp(sun.intensity, targetSunIntensity, blend)
 
@@ -556,21 +952,29 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
       -vaneHeading,
       1 - Math.exp(-4 * Math.min(deltaSeconds, 0.05)),
     )
-    clouds.position.x = Math.sin(timeSeconds * 0.018) * 8
+    grass.time.value = timeSeconds
 
-    if (currentPreset === 'tornado') {
-      vortex.group.rotation.y = timeSeconds * 0.72
-      vortex.dust.rotation.y = timeSeconds * 1.4
-      for (let index = 0; index < vortex.rings.length; index += 1) {
-        const ring = vortex.rings[index]
-        if (!ring) continue
-        ring.rotation.z = Math.sin(timeSeconds * 1.3 + index) * 0.035
-        ring.scale.setScalar(1 + Math.sin(timeSeconds * 2.1 + index * 0.7) * 0.035)
+    if (isVortexPreset(currentPreset)) {
+      const follow = 1 - Math.exp(-5.5 * Math.min(0.05, deltaSeconds))
+      vortexCenter.lerp(vortexTarget, follow)
+      vortex.group.position.copy(vortexCenter)
+      grass.vortexCenter.value.set(vortexCenter.x, vortexCenter.z)
+      vortex.time.value = timeSeconds
+      for (const [index, ring] of vortex.rings.entries()) {
+        const pulse = 1 + Math.sin(timeSeconds * 1.25 + index * 1.7) * 0.045
+        ring.rotation.y = timeSeconds * (index % 2 === 0 ? 0.34 : -0.27)
+        ring.scale.set(
+          pulse * (1.08 + index * 0.055),
+          1,
+          pulse * (0.72 + index * 0.045),
+        )
       }
     }
   }
 
   function dispose(): void {
+    rocks.dispose()
+    grass.mesh.dispose()
     const geometries = new Set<THREE.BufferGeometry>()
     const materials = new Set<DisposableMaterial>()
     root.traverse((object) => {
@@ -585,6 +989,8 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
       material.map?.dispose()
       material.dispose()
     }
+    skyTexture.dispose()
+    if (scene.background === skyTexture) scene.background = null
     root.removeFromParent()
   }
 
@@ -594,6 +1000,8 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     forward,
     vortexCenter,
     setPreset,
+    setVortexLook,
+    setVortexTarget,
     update,
     dispose,
   })

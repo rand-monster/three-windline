@@ -3,6 +3,7 @@ import { copyFiniteVec3 } from '../internal/math.js'
 import type { Vec3Like, WindField, WindSampleTarget } from '../types.js'
 
 export class UniformWindField implements WindField {
+  readonly program = 'affine' as const
   readonly velocity = new Vector3(5, 0, 1)
 
   constructor(velocity?: Vec3Like) {

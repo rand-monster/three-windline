@@ -15,6 +15,7 @@ export interface AffineWindFieldOptions {
 }
 
 export class AffineWindField implements WindField {
+  readonly program = 'affine' as const
   readonly origin = new Vector3()
   readonly velocity = new Vector3(5, 0, 1)
   readonly jacobian = new Matrix3().set(0, 0, 0, 0, 0, 0, 0, 0, 0)

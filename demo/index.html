@@ -29,15 +29,15 @@
           <button class="preset-button is-active" type="button" data-preset="breeze">
             Breeze
           </button>
-          <button class="preset-button" type="button" data-preset="tornado">
-            Wind
-          </button>
-          <button class="preset-button" type="button" data-preset="water">
-            Water
-          </button>
-          <button class="preset-button" type="button" data-preset="fire">
-            Fire
-          </button>
+          <div id="twisterSelectShell" class="twister-select-shell" data-twister="tornado">
+            <select id="twisterSelect" aria-label="Twister type">
+              <option value="" disabled selected>Twister</option>
+              <option value="tornado">Twister · Wind</option>
+              <option value="water">Twister · Water</option>
+              <option value="fire">Twister · Fire</option>
+            </select>
+            <i data-lucide="chevron-down" aria-hidden="true"></i>
+          </div>
           <button class="preset-button" type="button" data-preset="storm">
             Storm Front
           </button>
@@ -151,14 +151,14 @@
             </div>
             <div class="range-control">
               <label for="axisWanderSlider">Axis wander</label>
-              <output id="axisWanderValue" for="axisWanderSlider">1.45 m</output>
+              <output id="axisWanderValue" for="axisWanderSlider">1.80 m</output>
               <input
                 id="axisWanderSlider"
                 type="range"
                 min="0"
                 max="3"
                 step="0.05"
-                value="1.45"
+                value="1.8"
               />
             </div>
             <div class="range-control">

@@ -1,4 +1,5 @@
 import {
+  ChevronDown,
   Pause,
   Play,
   RotateCcw,
@@ -14,6 +15,7 @@ import {
   UniformWindField,
   VortexWindField,
   WIND_LINE_CURVES,
+  createWindSampleTarget,
   createWindLineSystem,
   type WindField,
   type WindLineCurve,
@@ -79,6 +81,12 @@ interface DemoSnapshot {
   readonly draws: number
   readonly controls: Readonly<DemoControls>
   readonly vortex: Readonly<DemoVortexLook>
+  readonly vortexMotion: {
+    readonly speed: number
+    readonly velocity: readonly number[]
+    readonly lean: readonly number[]
+    readonly target: readonly number[]
+  }
   readonly vortexBody: Readonly<WindLineStats>
   readonly camera: readonly number[]
   readonly target: readonly number[]
@@ -328,6 +336,7 @@ function installIcons(root: Element | Document | DocumentFragment = document): v
   createIcons({
     root,
     icons: {
+      ChevronDown,
       Pause,
       Play,
       RotateCcw,
@@ -361,6 +370,8 @@ async function start(): Promise<void> {
   const pauseButton = requiredElement<HTMLButtonElement>('pauseButton')
   const resetButton = requiredElement<HTMLButtonElement>('resetButton')
   const curveSelect = requiredElement<HTMLSelectElement>('curveSelect')
+  const twisterSelect = requiredElement<HTMLSelectElement>('twisterSelect')
+  const twisterSelectShell = requiredElement<HTMLDivElement>('twisterSelectShell')
   const presetButtons = [...document.querySelectorAll<HTMLButtonElement>('[data-preset]')]
   const sliders = Object.fromEntries(sliderIds.map((id) => [
     id,
@@ -429,6 +440,7 @@ async function start(): Promise<void> {
     tornado: new VortexWindField(),
     storm: new CoherentWindField(),
   } satisfies Record<'breeze' | 'tornado' | 'storm', WindField>
+  const vaneSample = createWindSampleTarget()
   const runtimeControls: DemoControls = { ...PRESETS.breeze.controls }
   const vortexLook = { ...DEFAULT_VORTEX_LOOK }
   let activePreset: DemoPresetId = 'breeze'
@@ -574,7 +586,7 @@ async function start(): Promise<void> {
       fields.tornado.configure({
         center: world.vortexCenter,
         baseVelocity: [0.12 * speed, 0, 0.04],
-        angularSpeed: 3.1 * speed + gust * 0.035,
+        angularSpeed: 7.2 * speed + gust * 0.08,
         radialInflow: 0.5 + gust * 0.015,
         lift: 6 + gust * 0.12,
         turbulence: 0.42 + gust * 0.022,
@@ -717,6 +729,14 @@ async function start(): Promise<void> {
       button.classList.toggle('is-active', selected)
       button.setAttribute('aria-pressed', String(selected))
     }
+    const twisterSelected = isVortexPreset(preset)
+    twisterSelectShell.classList.toggle('is-active', twisterSelected)
+    if (twisterSelected) {
+      twisterSelect.value = preset
+      twisterSelectShell.dataset.twister = preset
+    } else {
+      twisterSelect.value = ''
+    }
     curveSelect.value = activeCurve
     syncAllSliders()
     syncVortexSliders()
@@ -775,6 +795,7 @@ async function start(): Promise<void> {
 
   function reset(): void {
     simulationTime = 0
+    world.resetFeedback()
     camera.position.copy(DEFAULT_CAMERA_POSITION)
     controls.target.copy(DEFAULT_CAMERA_TARGET)
     controls.update()
@@ -802,6 +823,12 @@ async function start(): Promise<void> {
       draws,
       controls: Object.freeze({ ...runtimeControls }),
       vortex: Object.freeze({ ...vortexLook }),
+      vortexMotion: Object.freeze({
+        speed: Math.hypot(world.vortexVelocity.x, world.vortexVelocity.z),
+        velocity: Object.freeze(world.vortexVelocity.toArray()),
+        lean: Object.freeze(world.vortexLean.toArray()),
+        target: Object.freeze(world.vortexTarget.toArray()),
+      }),
       vortexBody: Object.freeze({ ...vortexBody.readStats(vortexBodyStats) }),
       camera: Object.freeze(camera.position.toArray()),
       target: Object.freeze(controls.target.toArray()),
@@ -848,6 +875,10 @@ async function start(): Promise<void> {
       if (preset && preset in PRESETS) setPreset(preset, true)
     }, listen)
   }
+  twisterSelect.addEventListener('change', () => {
+    const preset = twisterSelect.value as DemoPresetId
+    if (isVortexPreset(preset)) setPreset(preset, true)
+  }, listen)
   for (const id of sliderIds) {
     sliders[id].addEventListener('input', () => {
       updateLiveParameter(id, Number(sliders[id].value))
@@ -930,12 +961,30 @@ async function start(): Promise<void> {
         .copy(BREEZE_DIRECTION)
         .multiplyScalar(breezeSpeed))
     }
+    activeField.sample(world.vanePosition, simulationTime, vaneSample)
+    world.setVaneWind(vaneSample.velocity)
 
     controls.update()
     camera.updateMatrixWorld()
     world.update(simulationTime, simulationDelta)
     if (isVortexPreset(activePreset)) {
       fields.tornado.center.copy(world.vortexCenter)
+      fields.tornado.envelope.axisControl[0] = (
+        DEMO_VORTEX_ENVELOPE.axisControl[0] * vortexLook.axisBend
+        + world.vortexLean.x * 0.45
+      )
+      fields.tornado.envelope.axisControl[1] = (
+        DEMO_VORTEX_ENVELOPE.axisControl[1] * vortexLook.axisBend
+        + world.vortexLean.y * 0.45
+      )
+      fields.tornado.envelope.axisTip[0] = (
+        DEMO_VORTEX_ENVELOPE.axisTip[0] * vortexLook.axisBend
+        + world.vortexLean.x
+      )
+      fields.tornado.envelope.axisTip[1] = (
+        DEMO_VORTEX_ENVELOPE.axisTip[1] * vortexLook.axisBend
+        + world.vortexLean.y
+      )
     }
     windline.update({
       timeSeconds: simulationTime,

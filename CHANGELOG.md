@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.3.2 - 2026-07-25
+
+### Changed
+
+- Ties vortex silhouette speed to `angularSpeed`, so runtime speed changes now
+  accelerate both ribbon transport and the animated funnel axis.
+- Increases the axis phase separation from base to crown and adds a secondary
+  Z harmonic, producing faster multi-stage S-shaped deformation instead of a
+  slowly drifting centerline.
+- Raises the demo's angular transport to roughly one visible rotation every
+  `0.5-1.1` seconds depending on radial layer, preset, and instance, and lifts
+  the animated-axis speed ceiling without adding camera motion.
+- Widens deterministic per-instance variation across orbital speed, radius,
+  height, phase, length, and local flutter, keeping the funnel readable while
+  breaking up synchronized windline bands with no dynamic CPU uploads.
+- Replaces click-target interpolation with acceleration-limited arrival
+  steering, curved redirection, braking-distance deceleration, and a
+  velocity-driven crown lean that trails the moving funnel and settles at rest.
+- Adds a terrain-conforming RTS target reticle with a command pulse and a
+  quieter arrival contraction, and groups Wind, Water, and Fire inside one
+  Twister dropdown.
+- Drives the wind vane from a live per-frame sample of the active `WindField`,
+  with shortest-arc damping and a calm threshold instead of preset directions.
+
 ## 0.3.1 - 2026-07-25
 
 ### Changed

@@ -147,7 +147,7 @@ button {
 
 .preset-switcher {
   display: flex;
-  min-width: 580px;
+  min-width: 430px;
   height: 44px;
   align-items: center;
   justify-content: center;
@@ -184,6 +184,82 @@ button {
   background: #193a32;
   box-shadow: 0 4px 12px rgba(20, 47, 40, 0.19);
   color: #f5f9f4;
+}
+
+.twister-select-shell {
+  --twister-color: #bcebd2;
+  position: relative;
+  height: 34px;
+  border-radius: 4px;
+  transition:
+    background 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.twister-select-shell[data-twister="water"] {
+  --twister-color: #57dfff;
+}
+
+.twister-select-shell[data-twister="fire"] {
+  --twister-color: #ff8b43;
+}
+
+.twister-select-shell::before {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 13px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--twister-color);
+  box-shadow: 0 0 0 1px rgba(20, 47, 40, 0.14);
+  content: "";
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.twister-select-shell select {
+  width: 152px;
+  height: 34px;
+  appearance: none;
+  padding: 0 35px 0 27px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: #4b625c;
+  cursor: pointer;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.twister-select-shell svg {
+  position: absolute;
+  top: 9px;
+  right: 12px;
+  width: 15px;
+  height: 15px;
+  pointer-events: none;
+  stroke-width: 1.8;
+}
+
+.twister-select-shell:hover select {
+  color: var(--ink);
+}
+
+.twister-select-shell.is-active {
+  background: #193a32;
+  box-shadow: 0 4px 12px rgba(20, 47, 40, 0.19);
+}
+
+.twister-select-shell.is-active select {
+  color: #f5f9f4;
+}
+
+.twister-select-shell.is-active::before {
+  box-shadow: 0 0 8px color-mix(in srgb, var(--twister-color) 76%, transparent);
 }
 
 .is-vortex-targeting canvas {
@@ -643,7 +719,7 @@ button {
   }
 
   .preset-switcher {
-    min-width: 540px;
+    min-width: 420px;
   }
 
   .preset-button {

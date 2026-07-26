@@ -227,6 +227,48 @@ async function runVariant(browser, backend) {
       initial.activeLines > 0,
       `${backend} snapshot must report visible wind lines`,
     )
+    const presetNavigation = await page.evaluate(() => ({
+      buttons: [...document.querySelectorAll('[data-preset]')]
+        .map(button => button.getAttribute('data-preset')),
+      twisterOptions: [...document.querySelectorAll('#twisterSelect option')]
+        .map(option => option.getAttribute('value')),
+    }))
+    assert.deepEqual(presetNavigation.buttons, ['breeze', 'storm'])
+    assert.deepEqual(presetNavigation.twisterOptions, ['', 'tornado', 'water', 'fire'])
+    assert.equal(await page.locator('#twisterSelect').inputValue(), '')
+    const initialVane = await page.evaluate(() => {
+      const vane = globalThis.__threeWindlineDemo?.scene
+        .getObjectByName('windline-demo-wind-vane')
+      return {
+        sampleCount: Number(vane?.userData?.sampleCount),
+        speed: Number(vane?.userData?.windSpeed),
+        windX: Number(vane?.userData?.windX),
+        windZ: Number(vane?.userData?.windZ),
+        targetHeading: Number(vane?.userData?.targetHeading),
+      }
+    })
+    assert.ok(initialVane.sampleCount >= 1)
+    assert.ok(initialVane.speed > 1)
+    assert.ok(Number.isFinite(initialVane.targetHeading))
+    assert.ok(
+      Math.abs(
+        initialVane.targetHeading - Math.atan2(initialVane.windZ, initialVane.windX),
+      ) < 1e-6,
+    )
+    await page.locator('#speedSlider').evaluate((element) => {
+      element.value = '1.8'
+      element.dispatchEvent(new Event('input', { bubbles: true }))
+    })
+    await page.waitForFunction(
+      before => {
+        const vane = globalThis.__threeWindlineDemo?.scene
+          .getObjectByName('windline-demo-wind-vane')
+        return Number(vane?.userData?.sampleCount) > before.sampleCount
+          && Number(vane?.userData?.windSpeed) > before.speed * 1.35
+      },
+      initialVane,
+      { timeout },
+    )
 
     const curves = ['flow', 'straight', 'arc', 'ring', 'helix', 'spiral']
     const compiledCurves = []
@@ -254,10 +296,7 @@ async function runVariant(browser, backend) {
       assert.equal(state.drawCalls, 1)
       compiledCurves.push(curve)
     }
-    assert.equal(
-      await page.evaluate(() => globalThis.__threeWindlineDemo?.setPreset('tornado')),
-      true,
-    )
+    await page.locator('#twisterSelect').selectOption('tornado')
     await page.waitForFunction(
       () => {
         const state = globalThis.__threeWindlineDemo?.snapshot()
@@ -279,6 +318,13 @@ async function runVariant(browser, backend) {
     assert.equal(tornado.raw.vortexBody.drawCalls, 1)
     assert.equal(tornado.raw.vortexBody.triangles, 144 * 12 * 2)
     assert.equal(tornado.raw.vortexBody.dynamicInstanceUploads, 0)
+    assert.equal(await page.locator('#twisterSelect').inputValue(), 'tornado')
+    assert.equal(
+      await page.locator('#twisterSelectShell').evaluate(
+        element => element.classList.contains('is-active'),
+      ),
+      true,
+    )
     const environmentVfx = await page.evaluate(() => {
       const scene = globalThis.__threeWindlineDemo?.scene
       const grass = scene?.getObjectByName('windline-demo-grass')
@@ -314,13 +360,7 @@ async function runVariant(browser, backend) {
       ['water', 304],
       ['fire', 320],
     ]) {
-      assert.equal(
-        await page.evaluate(
-          value => globalThis.__threeWindlineDemo?.setPreset(value),
-          preset,
-        ),
-        true,
-      )
+      await page.locator('#twisterSelect').selectOption(preset)
       await page.waitForFunction(
         ([expectedPreset, expectedLines]) => {
           const state = globalThis.__threeWindlineDemo?.snapshot()
@@ -369,6 +409,34 @@ async function runVariant(browser, backend) {
     )
     assert.ok(initialTravel > 0.3, 'vortex did not begin moving toward the click target')
     assert.ok(initialTravel < 4.5, `vortex target movement snapped ${initialTravel.toFixed(2)} m`)
+    const vortexMotion = await page.evaluate(
+      () => globalThis.__threeWindlineDemo?.snapshot().vortexMotion,
+    )
+    assert.ok(vortexMotion.speed > 0.2)
+    assert.ok(vortexMotion.speed <= 6.5 + 1e-6)
+    assert.ok(Math.hypot(...vortexMotion.lean) > 0.01)
+    const targetMarker = await page.evaluate(() => {
+      const scene = globalThis.__threeWindlineDemo?.scene
+      const marker = scene?.getObjectByName('windline-demo-vortex-target-marker')
+      const reticle = scene?.getObjectByName('windline-demo-vortex-target-reticle')
+      return {
+        visible: marker?.visible === true,
+        phase: marker?.userData?.phase,
+        commandSerial: Number(marker?.userData?.commandSerial),
+        position: marker?.position.toArray(),
+        vertices: Number(reticle?.geometry?.getAttribute?.('position')?.count),
+      }
+    })
+    assert.equal(targetMarker.visible, true)
+    assert.equal(targetMarker.phase, 'command')
+    assert.ok(targetMarker.commandSerial >= 1)
+    assert.ok(targetMarker.vertices > 0)
+    assert.ok(
+      Math.hypot(
+        targetMarker.position[0] - vortexMotion.target[0],
+        targetMarker.position[2] - vortexMotion.target[2],
+      ) < 0.01,
+    )
     await page.waitForFunction(
       before => {
         const position = globalThis.__threeWindlineDemo?.scene
@@ -382,6 +450,52 @@ async function runVariant(browser, backend) {
       },
       vortexPositionBeforeClick,
       { timeout },
+    )
+    await page.waitForFunction(
+      () => {
+        const bridge = globalThis.__threeWindlineDemo
+        const state = bridge?.snapshot()
+        const guide = bridge?.scene.getObjectByName('windline-demo-vortex-guide')
+        const target = state?.vortexMotion?.target
+        if (!guide || !target) return false
+        return state.vortexMotion.speed < 0.01
+          && Math.hypot(...state.vortexMotion.lean) < 0.02
+          && Math.hypot(
+            guide.position.x - target[0],
+            guide.position.z - target[2],
+          ) < 0.01
+      },
+      null,
+      { timeout },
+    )
+    const settledMarker = await page.evaluate(() => {
+      const marker = globalThis.__threeWindlineDemo?.scene
+        .getObjectByName('windline-demo-vortex-target-marker')
+      return {
+        visible: marker?.visible === true,
+        phase: marker?.userData?.phase,
+        arrivalSerial: Number(marker?.userData?.arrivalSerial),
+      }
+    })
+    assert.equal(settledMarker.visible, false)
+    assert.equal(settledMarker.phase, 'hidden')
+    assert.ok(settledMarker.arrivalSerial >= 1)
+    await page.mouse.click(
+      canvasBounds.x + canvasBounds.width * 0.22,
+      canvasBounds.y + canvasBounds.height * 0.74,
+    )
+    await page.waitForTimeout(100)
+    assert.equal(
+      await page.evaluate(() => {
+        const bridge = globalThis.__threeWindlineDemo
+        const marker = bridge?.scene.getObjectByName(
+          'windline-demo-vortex-target-marker',
+        )
+        if (marker?.userData?.phase !== 'command') return false
+        bridge?.reset()
+        return marker?.visible === false && marker?.userData?.phase === 'hidden'
+      }),
+      true,
     )
 
     assert.equal(
@@ -398,6 +512,7 @@ async function runVariant(browser, backend) {
       null,
       { timeout },
     )
+    assert.equal(await page.locator('#twisterSelect').inputValue(), '')
 
     let shaderBudget
     if (backend === 'webgpu') {

@@ -73,13 +73,13 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
   // so height, angle, and radial layers remain filled without another attribute.
   const index = float(instanceIndex)
   const heightPhase = fract(
-    index.mul(0.754877666).add(trait.z.mul(0.08)),
+    index.mul(0.754877666).add(trait.z.mul(0.16)),
   )
   const initialAngle = fract(
-    index.mul(0.618033989).add(trait.x.mul(0.06)),
+    index.mul(0.618033989).add(trait.x.mul(0.14)),
   ).mul(TAU)
   const radialUnit = fract(
-    index.mul(0.569840296).add(trait.y.mul(0.12)),
+    index.mul(0.569840296).add(trait.y.mul(0.22)),
   )
   const coreLayer = mix(coreRadiusRatio, 0.58, sqrt(radialUnit))
   const shellLayer = mix(0.55, 1, pow(radialUnit, 0.35))
@@ -90,15 +90,15 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
     layeredRadius,
     mix(1.02, 1.2, radialUnit),
     outerLayer,
-  )
+  ).mul(mix(0.9, 1.12, seed.x))
   const layerWeight = mix(
     mix(0.72, 1, shellSelector),
     0.58,
     outerLayer,
   )
 
-  const verticalSpeed = lift.mul(mix(0.92, 1.08, trait.x)).max(0.1)
-  const pathHeight = height.mul(mix(0.9, 1.12, trait.z))
+  const verticalSpeed = lift.mul(mix(0.84, 1.18, trait.x)).max(0.1)
+  const pathHeight = height.mul(mix(0.84, 1.18, trait.z))
   const cycleDuration = pathHeight.div(verticalSpeed)
   const headTime = fract(heightPhase.add(time.div(cycleDuration)))
     .mul(cycleDuration)
@@ -113,7 +113,7 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
   )
   const instanceAngularSpeed = angularSpeed.mul(
     mix(1.32, 0.76, clamp(initialRadiusRatio, 0, 1)),
-  )
+  ).mul(mix(0.84, 1.18, seed.z))
   const headRadius = headEnvelope.mul(headContraction)
   const horizontalDrift = vec3(
     fieldVelocity.x.sub(observerVelocity.x),
@@ -126,7 +126,7 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
       .add(horizontalDrift.dot(horizontalDrift)),
   ).max(0.1)
   const instanceLength = length.mul(
-    mix(0.42, 1.08, trait.y).mul(mix(0.82, 1.08, shellSelector)),
+    mix(0.32, 1.16, trait.y).mul(mix(0.78, 1.12, shellSelector)),
   )
   const pathTime = headTime.add(positionZ.mul(instanceLength).div(headPathSpeed))
   const rawHeight = verticalSpeed.mul(pathTime).div(pathHeight)
@@ -142,8 +142,8 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
     ),
   )
   const basePathRadius = envelope.mul(radialContraction)
-  const radialFlutterFrequency = mix(0.75, 1.65, trait.w)
-  const radialFlutterAmplitude = clamp(turbulence.mul(0.11), 0, 0.18)
+  const radialFlutterFrequency = mix(0.68, 1.92, trait.w)
+  const radialFlutterAmplitude = clamp(turbulence.mul(0.13), 0, 0.22)
     .mul(mix(0.45, 1, clamp(initialRadiusRatio, 0, 1)))
   const radialFlutterPhase = pathTime
     .mul(radialFlutterFrequency)
@@ -153,8 +153,8 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
   )
   const radius = basePathRadius.mul(radialFlutter)
 
-  const flutterFrequency = mix(1.1, 2.4, trait.z)
-  const flutterAmplitude = clamp(turbulence.mul(0.035), 0, 0.18)
+  const flutterFrequency = mix(0.95, 2.8, trait.z)
+  const flutterAmplitude = clamp(turbulence.mul(0.045), 0, 0.22)
     .mul(mix(0.45, 1, clamp(initialRadiusRatio, 0, 1)))
   const flutterPhase = pathTime.mul(flutterFrequency).add(trait.y.mul(TAU))
   const angle = initialAngle
@@ -200,12 +200,13 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
   const axisTipWeight = axisHeight.mul(axisHeight)
   const axisControlRate = float(2).sub(axisHeight.mul(4)).mul(axisHeightRate)
   const axisTipRate = axisHeight.mul(axisHeightRate).mul(2)
-  const axisPhaseX = time.mul(0.62)
-  const axisPhaseZ = time.mul(0.48).add(1.4)
-  const axisSecondaryPhase = time.mul(0.95).add(0.7)
-  const axisAngleX = axisPhaseX.add(axisHeight.mul(2.65))
-  const axisAngleZ = axisPhaseZ.add(axisHeight.mul(2.1))
-  const axisSecondaryAngle = axisSecondaryPhase.add(axisHeight.mul(5.4))
+  const axisShapeRate = clamp(angularSpeed.mul(0.25), 0.95, 2.25)
+  const axisPhaseX = time.mul(axisShapeRate)
+  const axisPhaseZ = time.mul(axisShapeRate.mul(0.82)).add(1.4)
+  const axisSecondaryPhase = time.mul(axisShapeRate.mul(1.75)).add(0.7)
+  const axisAngleX = axisPhaseX.add(axisHeight.mul(4.1))
+  const axisAngleZ = axisPhaseZ.add(axisHeight.mul(3.4))
+  const axisSecondaryAngle = axisSecondaryPhase.add(axisHeight.mul(8.2))
   const axisX = axis.x.mul(axisControlWeight)
     .add(axis.z.mul(axisTipWeight))
     .add(
@@ -221,18 +222,23 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
     .add(
       cos(axisAngleZ).sub(cos(axisPhaseZ)).mul(axisWander).mul(0.76),
     )
+    .add(
+      cos(axisSecondaryAngle).sub(cos(axisSecondaryPhase))
+        .mul(axisWander)
+        .mul(0.2),
+    )
   const axisRateX = axis.x.mul(axisControlRate)
     .add(axis.z.mul(axisTipRate))
     .add(
       cos(axisAngleX)
         .mul(axisHeightRate)
-        .mul(2.65)
+        .mul(4.1)
         .mul(axisWander),
     )
     .add(
       cos(axisSecondaryAngle)
         .mul(axisHeightRate)
-        .mul(5.4)
+        .mul(8.2)
         .mul(axisWander)
         .mul(0.25),
     )
@@ -242,9 +248,17 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
       sin(axisAngleZ)
         .negate()
         .mul(axisHeightRate)
-        .mul(2.1)
+        .mul(3.4)
         .mul(axisWander)
         .mul(0.76),
+    )
+    .add(
+      sin(axisSecondaryAngle)
+        .negate()
+        .mul(axisHeightRate)
+        .mul(8.2)
+        .mul(axisWander)
+        .mul(0.2),
     )
 
   const pathCenter = center

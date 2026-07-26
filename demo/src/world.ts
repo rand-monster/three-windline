@@ -44,8 +44,14 @@ export interface DemoWorld {
   readonly root: THREE.Group
   readonly anchor: THREE.Vector3
   readonly forward: THREE.Vector3
+  readonly vanePosition: THREE.Vector3
   readonly vortexCenter: THREE.Vector3
+  readonly vortexTarget: THREE.Vector3
+  readonly vortexVelocity: THREE.Vector3
+  readonly vortexLean: THREE.Vector2
+  resetFeedback(): void
   setPreset(preset: DemoPresetId): void
+  setVaneWind(velocity: THREE.Vector3): void
   setVortexLook(look: DemoVortexLook): void
   setVortexTarget(point: THREE.Vector3): boolean
   update(timeSeconds: number, deltaSeconds: number): void
@@ -55,6 +61,11 @@ export interface DemoWorld {
 const TERRAIN_SIZE = 280
 const TERRAIN_SEGMENTS = 176
 const TAU = Math.PI * 2
+const VORTEX_MAX_SPEED = 6.5
+const VORTEX_ACCELERATION = 8.5
+const VORTEX_BRAKING = 10.5
+const VORTEX_TURN_ACCELERATION = 12.5
+const VORTEX_LEAN_RESPONSE = 4.2
 const TERRAIN_LOW = new THREE.Color(0x557b4f)
 const TERRAIN_MEADOW = new THREE.Color(0x80a953)
 const TERRAIN_MOSS = new THREE.Color(0x3f7b50)
@@ -70,7 +81,7 @@ export const DEMO_VORTEX_ENVELOPE = Object.freeze({
   coreRadiusRatio: 0.12,
   axisControl: Object.freeze([4.5, -2.2] as const),
   axisTip: Object.freeze([-3, 2.8] as const),
-  axisWander: 1.45,
+  axisWander: 1.8,
 })
 
 function smoothstep(minimum: number, maximum: number, value: number): number {
@@ -755,6 +766,7 @@ function createWindSculpture(): {
   }
 
   const vane = new THREE.Group()
+  vane.name = 'windline-demo-wind-vane'
   vane.position.y = 7.6
   const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 5.1, 8), brass)
   shaft.rotation.z = Math.PI * 0.5
@@ -908,6 +920,268 @@ function createVortexGuide() {
   }
 }
 
+type TargetMarkerPhase = 'hidden' | 'command' | 'waiting' | 'arrival'
+
+interface VortexTargetMarker {
+  readonly group: THREE.Group
+  command(x: number, z: number, heading: number, timeSeconds: number): void
+  arrive(timeSeconds: number): void
+  cancel(): void
+  setColor(color: THREE.ColorRepresentation): void
+  update(timeSeconds: number): void
+}
+
+function pushMarkerBand(
+  target: number[],
+  innerRadius: number,
+  outerRadius: number,
+  segments: number,
+): void {
+  for (let segment = 0; segment < segments; segment += 1) {
+    const firstAngle = segment / segments * TAU
+    const secondAngle = (segment + 1) / segments * TAU
+    const firstCos = Math.cos(firstAngle)
+    const firstSin = Math.sin(firstAngle)
+    const secondCos = Math.cos(secondAngle)
+    const secondSin = Math.sin(secondAngle)
+    target.push(
+      firstCos * innerRadius, firstSin * innerRadius,
+      firstCos * outerRadius, firstSin * outerRadius,
+      secondCos * outerRadius, secondSin * outerRadius,
+      firstCos * innerRadius, firstSin * innerRadius,
+      secondCos * outerRadius, secondSin * outerRadius,
+      secondCos * innerRadius, secondSin * innerRadius,
+    )
+  }
+}
+
+function pushMarkerTick(
+  target: number[],
+  angle: number,
+  innerRadius: number,
+  outerRadius: number,
+  halfWidth: number,
+): void {
+  const directionX = Math.cos(angle)
+  const directionZ = Math.sin(angle)
+  const tangentX = -directionZ * halfWidth
+  const tangentZ = directionX * halfWidth
+  const innerX = directionX * innerRadius
+  const innerZ = directionZ * innerRadius
+  const outerX = directionX * outerRadius
+  const outerZ = directionZ * outerRadius
+  target.push(
+    innerX - tangentX, innerZ - tangentZ,
+    outerX - tangentX, outerZ - tangentZ,
+    outerX + tangentX, outerZ + tangentZ,
+    innerX - tangentX, innerZ - tangentZ,
+    outerX + tangentX, outerZ + tangentZ,
+    innerX + tangentX, innerZ + tangentZ,
+  )
+}
+
+function pushMarkerDisc(target: number[], radius: number, segments: number): void {
+  for (let segment = 0; segment < segments; segment += 1) {
+    const firstAngle = segment / segments * TAU
+    const secondAngle = (segment + 1) / segments * TAU
+    target.push(
+      0, 0,
+      Math.cos(firstAngle) * radius, Math.sin(firstAngle) * radius,
+      Math.cos(secondAngle) * radius, Math.sin(secondAngle) * radius,
+    )
+  }
+}
+
+function createMarkerGeometry(offsets: readonly number[]): THREE.BufferGeometry {
+  const geometry = new THREE.BufferGeometry()
+  const positions = new THREE.BufferAttribute(
+    new Float32Array(offsets.length / 2 * 3),
+    3,
+  )
+  positions.setUsage(THREE.DynamicDrawUsage)
+  geometry.setAttribute('position', positions)
+  geometry.userData.offsets = Float32Array.from(offsets)
+  return geometry
+}
+
+function fitMarkerToTerrain(
+  geometry: THREE.BufferGeometry,
+  centerX: number,
+  centerZ: number,
+  heading: number,
+): void {
+  const offsets = geometry.userData.offsets as Float32Array
+  const positions = geometry.getAttribute('position')
+  const centerHeight = terrainHeightAt(centerX, centerZ)
+  const headingCos = Math.cos(heading)
+  const headingSin = Math.sin(heading)
+  for (let vertex = 0; vertex < positions.count; vertex += 1) {
+    const localX = offsets[vertex * 2] ?? 0
+    const localZ = offsets[vertex * 2 + 1] ?? 0
+    const rotatedX = localX * headingCos - localZ * headingSin
+    const rotatedZ = localX * headingSin + localZ * headingCos
+    positions.setXYZ(
+      vertex,
+      rotatedX,
+      terrainHeightAt(centerX + rotatedX, centerZ + rotatedZ) - centerHeight + 0.12,
+      rotatedZ,
+    )
+  }
+  positions.needsUpdate = true
+  geometry.computeBoundingSphere()
+}
+
+function createVortexTargetMarker(): VortexTargetMarker {
+  const group = new THREE.Group()
+  group.name = 'windline-demo-vortex-target-marker'
+  group.visible = false
+
+  const reticleOffsets: number[] = []
+  pushMarkerBand(reticleOffsets, 0.72, 0.84, 64)
+  pushMarkerBand(reticleOffsets, 1.72, 1.82, 64)
+  for (let tick = 0; tick < 8; tick += 1) {
+    const forward = tick === 0
+    pushMarkerTick(
+      reticleOffsets,
+      tick / 8 * TAU,
+      forward ? 1.06 : 1.28,
+      forward ? 2.24 : 1.58,
+      forward ? 0.075 : 0.055,
+    )
+  }
+  const pulseOffsets: number[] = []
+  pushMarkerBand(pulseOffsets, 1.96, 2.08, 64)
+  pushMarkerDisc(pulseOffsets, 0.2, 24)
+
+  const reticleMaterial = new THREE.MeshBasicMaterial({
+    color: 0xcfffd0,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    depthTest: false,
+    toneMapped: false,
+    side: THREE.DoubleSide,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  })
+  reticleMaterial.name = 'windline-demo-vortex-target-reticle'
+  const pulseMaterial = new THREE.MeshBasicMaterial({
+    color: 0xeaffdb,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+    depthTest: false,
+    toneMapped: false,
+    side: THREE.DoubleSide,
+    blending: THREE.AdditiveBlending,
+    polygonOffset: true,
+    polygonOffsetFactor: -3,
+    polygonOffsetUnits: -3,
+  })
+  pulseMaterial.name = 'windline-demo-vortex-target-pulse'
+  const reticle = new THREE.Mesh(
+    createMarkerGeometry(reticleOffsets),
+    reticleMaterial,
+  )
+  const pulse = new THREE.Mesh(
+    createMarkerGeometry(pulseOffsets),
+    pulseMaterial,
+  )
+  reticle.name = 'windline-demo-vortex-target-reticle'
+  pulse.name = 'windline-demo-vortex-target-pulse'
+  reticle.renderOrder = 8
+  pulse.renderOrder = 9
+  group.add(reticle, pulse)
+
+  let phase: TargetMarkerPhase = 'hidden'
+  let phaseStartedAt = 0
+  let commandSerial = 0
+  let arrivalSerial = 0
+
+  function syncDebugState(): void {
+    group.userData.phase = phase
+    group.userData.commandSerial = commandSerial
+    group.userData.arrivalSerial = arrivalSerial
+  }
+
+  function setPhase(nextPhase: TargetMarkerPhase, timeSeconds: number): void {
+    phase = nextPhase
+    phaseStartedAt = timeSeconds
+    group.visible = nextPhase === 'command' || nextPhase === 'arrival'
+    syncDebugState()
+  }
+
+  function command(
+    x: number,
+    z: number,
+    heading: number,
+    timeSeconds: number,
+  ): void {
+    const height = terrainHeightAt(x, z)
+    group.position.set(x, height, z)
+    group.scale.setScalar(1)
+    fitMarkerToTerrain(reticle.geometry, x, z, heading)
+    fitMarkerToTerrain(pulse.geometry, x, z, heading)
+    commandSerial += 1
+    setPhase('command', timeSeconds)
+  }
+
+  function arrive(timeSeconds: number): void {
+    if (phase === 'hidden' || phase === 'arrival') return
+    arrivalSerial += 1
+    setPhase('arrival', timeSeconds)
+  }
+
+  function cancel(): void {
+    phase = 'hidden'
+    group.visible = false
+    reticleMaterial.opacity = 0
+    pulseMaterial.opacity = 0
+    syncDebugState()
+  }
+
+  function setColor(color: THREE.ColorRepresentation): void {
+    reticleMaterial.color.set(color)
+    pulseMaterial.color.copy(reticleMaterial.color).lerp(new THREE.Color(0xffffff), 0.42)
+  }
+
+  function update(timeSeconds: number): void {
+    if (phase === 'hidden' || phase === 'waiting') return
+    const age = Math.max(0, timeSeconds - phaseStartedAt)
+    if (phase === 'command') {
+      if (age >= 0.9) {
+        setPhase('waiting', timeSeconds)
+        reticleMaterial.opacity = 0
+        pulseMaterial.opacity = 0
+        return
+      }
+      const expansion = 1 - (1 - Math.min(1, age / 0.42)) ** 3
+      const fade = 1 - smoothstep(0.18, 0.9, age)
+      reticleMaterial.opacity = 0.72 * fade
+      pulseMaterial.opacity = 0.95 * fade
+      reticle.scale.setScalar(0.86 + expansion * 0.18)
+      pulse.scale.setScalar(0.7 + expansion * 0.58)
+      return
+    }
+    if (age >= 0.46) {
+      setPhase('hidden', timeSeconds)
+      reticleMaterial.opacity = 0
+      pulseMaterial.opacity = 0
+      return
+    }
+    const contraction = smoothstep(0, 0.46, age)
+    const fade = 1 - smoothstep(0.08, 0.46, age)
+    reticleMaterial.opacity = 0.38 * fade
+    pulseMaterial.opacity = 0.34 * fade
+    reticle.scale.setScalar(1.08 - contraction * 0.34)
+    pulse.scale.setScalar(1.18 - contraction * 0.58)
+  }
+
+  syncDebugState()
+  return { group, command, arrive, cancel, setColor, update }
+}
+
 export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   const root = new THREE.Group()
   root.name = 'windline-demo-world'
@@ -921,6 +1195,7 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   const farRidge = createDistantRidge(-224, 55, 0x789b94, 7.4)
   const sculpture = createWindSculpture()
   const vortex = createVortexGuide()
+  const targetMarker = createVortexTargetMarker()
   const skyTexture = createSkyTexture()
   root.add(
     terrain,
@@ -930,6 +1205,7 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     backRidge,
     sculpture.group,
     vortex.group,
+    targetMarker.group,
   )
 
   scene.background = skyTexture
@@ -954,8 +1230,17 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
 
   const anchor = new THREE.Vector3(0, terrainHeightAt(0, 8) + 3, 8)
   const forward = new THREE.Vector3(0.95, 0.04, 0.31).normalize()
+  const vanePosition = new THREE.Vector3(
+    sculpture.group.position.x + sculpture.vane.position.x,
+    sculpture.group.position.y + sculpture.vane.position.y,
+    sculpture.group.position.z + sculpture.vane.position.z,
+  )
   const vortexCenter = new THREE.Vector3(0, terrainHeightAt(0, 8) + 0.25, 8)
   const vortexTarget = vortexCenter.clone()
+  const vortexVelocity = new THREE.Vector3()
+  const vortexLean = new THREE.Vector2()
+  const vortexLeanTarget = new THREE.Vector2()
+  let worldTimeSeconds = 0
   let currentPreset: DemoPresetId = 'breeze'
   let targetSunIntensity = 3.8
   let vortexGlowStrength = 0.18
@@ -963,6 +1248,33 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   let vortexContactLightIntensity = 48
   const targetFog = new THREE.Color(0x90aca4)
   const vaneTarget = new THREE.Vector3(1, 0, 0)
+
+  function setVaneWind(velocity: THREE.Vector3): void {
+    const horizontalSpeed = Math.hypot(velocity.x, velocity.z)
+    sculpture.vane.userData.windSpeed = Number.isFinite(horizontalSpeed)
+      ? horizontalSpeed
+      : 0
+    if (
+      !Number.isFinite(velocity.x)
+      || !Number.isFinite(velocity.z)
+      || horizontalSpeed < 0.05
+    ) return
+    vaneTarget.set(
+      velocity.x / horizontalSpeed,
+      0,
+      velocity.z / horizontalSpeed,
+    )
+    sculpture.vane.userData.windX = velocity.x
+    sculpture.vane.userData.windZ = velocity.z
+    sculpture.vane.userData.targetHeading = Math.atan2(vaneTarget.z, vaneTarget.x)
+    sculpture.vane.userData.sampleCount = (
+      Number(sculpture.vane.userData.sampleCount) || 0
+    ) + 1
+  }
+
+  function resetFeedback(): void {
+    targetMarker.cancel()
+  }
 
   function setVortexLook(look: DemoVortexLook): void {
     const height = THREE.MathUtils.clamp(look.height, 12, 48)
@@ -984,6 +1296,12 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     const x = THREE.MathUtils.clamp(point.x, -96, 96)
     const z = THREE.MathUtils.clamp(point.z, -96, 96)
     vortexTarget.set(x, terrainHeightAt(x, z) + 0.25, z)
+    targetMarker.command(
+      x,
+      z,
+      Math.atan2(z - vortexCenter.z, x - vortexCenter.x),
+      worldTimeSeconds,
+    )
     return true
   }
 
@@ -998,14 +1316,19 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     vortex.group.visible = vortexActive
     sculpture.group.visible = !vortexActive
     rocks.visible = !vortexActive
+    if (!vortexActive) {
+      vortexTarget.copy(vortexCenter)
+      vortexVelocity.set(0, 0, 0)
+      vortexLean.set(0, 0)
+      targetMarker.cancel()
+    }
     if (preset === 'storm') {
       targetFog.set(0x657d7c)
       targetSunIntensity = 1.6
-      vaneTarget.set(0.78, 0, 0.63)
     } else if (preset === 'water') {
+      targetMarker.setColor(0x57e7ff)
       targetFog.set(0x80abb2)
       targetSunIntensity = 4.35
-      vaneTarget.set(0.2, 0, 0.98)
       vortex.dust.material.color.set(0x89ddff)
       vortex.glow.material.color.set(0x37cfff)
       vortex.halo.material.color.set(0x159fda)
@@ -1017,9 +1340,9 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
         ring.material.color.set(index % 2 === 0 ? 0x91eaff : 0xdffbff)
       }
     } else if (preset === 'fire') {
+      targetMarker.setColor(0xffa34f)
       targetFog.set(0xa99a82)
       targetSunIntensity = 4.55
-      vaneTarget.set(0.2, 0, 0.98)
       vortex.dust.material.color.set(0xff7a24)
       vortex.glow.material.color.set(0xff5b16)
       vortex.halo.material.color.set(0xff3a08)
@@ -1031,9 +1354,9 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
         ring.material.color.set(index % 2 === 0 ? 0xff8a2b : 0xffdda1)
       }
     } else if (preset === 'tornado') {
+      targetMarker.setColor(0xcfffd0)
       targetFog.set(0x90a99d)
       targetSunIntensity = 4.2
-      vaneTarget.set(0.2, 0, 0.98)
       vortex.dust.material.color.set(0xd9bf75)
       vortex.glow.material.color.set(0x9ed9b6)
       vortex.halo.material.color.set(0x65b990)
@@ -1047,11 +1370,12 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     } else {
       targetFog.set(0x90aca4)
       targetSunIntensity = 3.8
-      vaneTarget.set(0.95, 0, 0.31)
     }
   }
 
   function update(timeSeconds: number, deltaSeconds: number): void {
+    worldTimeSeconds = timeSeconds
+    targetMarker.update(timeSeconds)
     const blend = 1 - Math.exp(-2.8 * Math.min(0.05, deltaSeconds))
     if (scene.fog instanceof THREE.FogExp2) scene.fog.color.lerp(targetFog, blend)
     sun.intensity = THREE.MathUtils.lerp(sun.intensity, targetSunIntensity, blend)
@@ -1064,24 +1388,90 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     if (sculpture.rings[1]) sculpture.rings[1].rotation.y = 0.22 - timeSeconds * 0.11
     if (sculpture.rings[2]) sculpture.rings[2].rotation.x = 0.22 + timeSeconds * 0.14
     const vaneHeading = Math.atan2(vaneTarget.z, vaneTarget.x)
-    sculpture.vane.rotation.y = THREE.MathUtils.lerp(
-      sculpture.vane.rotation.y,
-      -vaneHeading,
-      1 - Math.exp(-4 * Math.min(deltaSeconds, 0.05)),
+    const targetRotation = -vaneHeading
+    const rotationDelta = Math.atan2(
+      Math.sin(targetRotation - sculpture.vane.rotation.y),
+      Math.cos(targetRotation - sculpture.vane.rotation.y),
     )
+    sculpture.vane.rotation.y += rotationDelta
+      * (1 - Math.exp(-4 * Math.min(deltaSeconds, 0.05)))
     grass.time.value = timeSeconds
 
     if (isVortexPreset(currentPreset)) {
+      const delta = Math.min(0.05, Math.max(0, deltaSeconds))
       const deltaX = vortexTarget.x - vortexCenter.x
       const deltaZ = vortexTarget.z - vortexCenter.z
       const distance = Math.hypot(deltaX, deltaZ)
+      const currentSpeed = Math.hypot(vortexVelocity.x, vortexVelocity.z)
+      let desiredVelocityX = 0
+      let desiredVelocityZ = 0
+      let desiredSpeed = 0
       if (distance > 1e-4) {
-        const speed = Math.min(6.5, distance * 1.35)
-        const travel = Math.min(distance, speed * Math.min(0.05, deltaSeconds))
-        vortexCenter.x += deltaX / distance * travel
-        vortexCenter.z += deltaZ / distance * travel
+        desiredSpeed = Math.min(
+          VORTEX_MAX_SPEED,
+          Math.sqrt(2 * VORTEX_BRAKING * distance),
+        )
+        desiredVelocityX = deltaX / distance * desiredSpeed
+        desiredVelocityZ = deltaZ / distance * desiredSpeed
       }
+
+      let accelerationX = 0
+      let accelerationZ = 0
+      if (delta > 0) {
+        const steeringX = desiredVelocityX - vortexVelocity.x
+        const steeringZ = desiredVelocityZ - vortexVelocity.z
+        const steeringLength = Math.hypot(steeringX, steeringZ)
+        const reversing = desiredVelocityX * vortexVelocity.x
+          + desiredVelocityZ * vortexVelocity.z < 0
+        const accelerationLimit = reversing
+          ? VORTEX_TURN_ACCELERATION
+          : desiredSpeed < currentSpeed
+            ? VORTEX_BRAKING
+            : VORTEX_ACCELERATION
+        const velocityStep = Math.min(steeringLength, accelerationLimit * delta)
+        if (steeringLength > 1e-5) {
+          const velocityScale = velocityStep / steeringLength
+          const velocityDeltaX = steeringX * velocityScale
+          const velocityDeltaZ = steeringZ * velocityScale
+          vortexVelocity.x += velocityDeltaX
+          vortexVelocity.z += velocityDeltaZ
+          accelerationX = velocityDeltaX / delta
+          accelerationZ = velocityDeltaZ / delta
+        }
+        vortexCenter.x += vortexVelocity.x * delta
+        vortexCenter.z += vortexVelocity.z * delta
+      }
+      const remainingX = vortexTarget.x - vortexCenter.x
+      const remainingZ = vortexTarget.z - vortexCenter.z
+      const crossedTarget = distance > 1e-4
+        && deltaX * remainingX + deltaZ * remainingZ <= 0
+      const restingAtTarget = Math.hypot(remainingX, remainingZ) < 0.06
+        && Math.hypot(vortexVelocity.x, vortexVelocity.z) < 0.25
+      if (crossedTarget || restingAtTarget) {
+        vortexCenter.x = vortexTarget.x
+        vortexCenter.z = vortexTarget.z
+        vortexVelocity.x = 0
+        vortexVelocity.z = 0
+        accelerationX = 0
+        accelerationZ = 0
+        targetMarker.arrive(timeSeconds)
+      }
+      const previousHeight = vortexCenter.y
       vortexCenter.y = terrainHeightAt(vortexCenter.x, vortexCenter.z) + 0.25
+      vortexVelocity.y = delta > 0
+        ? (vortexCenter.y - previousHeight) / delta
+        : 0
+      vortexLeanTarget.set(
+        -vortexVelocity.x * 0.29 - accelerationX * 0.055,
+        -vortexVelocity.z * 0.29 - accelerationZ * 0.055,
+      )
+      if (vortexLeanTarget.lengthSq() > 2.4 ** 2) {
+        vortexLeanTarget.setLength(2.4)
+      }
+      vortexLean.lerp(
+        vortexLeanTarget,
+        1 - Math.exp(-VORTEX_LEAN_RESPONSE * delta),
+      )
       vortex.group.position.copy(vortexCenter)
       grass.vortexCenter.value.set(vortexCenter.x, vortexCenter.z)
       vortex.time.value = timeSeconds
@@ -1148,8 +1538,14 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     root,
     anchor,
     forward,
+    vanePosition,
     vortexCenter,
+    vortexTarget,
+    vortexVelocity,
+    vortexLean,
+    resetFeedback,
     setPreset,
+    setVaneWind,
     setVortexLook,
     setVortexTarget,
     update,

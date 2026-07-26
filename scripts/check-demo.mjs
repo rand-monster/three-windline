@@ -227,6 +227,12 @@ async function runVariant(browser, backend) {
       initial.activeLines > 0,
       `${backend} snapshot must report visible wind lines`,
     )
+    assert.deepEqual(initial.raw.bloom, {
+      strength: 0.12,
+      radius: 0.16,
+      threshold: 1.18,
+      exposure: 1.06,
+    })
     const presetNavigation = await page.evaluate(() => ({
       buttons: [...document.querySelectorAll('[data-preset]')]
         .map(button => button.getAttribute('data-preset')),
@@ -319,6 +325,12 @@ async function runVariant(browser, backend) {
     assert.equal(tornado.raw.vortexBody.triangles, 144 * 12 * 2)
     assert.equal(tornado.raw.vortexBody.dynamicInstanceUploads, 0)
     assert.ok(Math.abs(tornado.raw.vortexMotion.angularSpeed - 26.16) < 1e-6)
+    assert.deepEqual(tornado.raw.bloom, {
+      strength: 0.2,
+      radius: 0.18,
+      threshold: 1.08,
+      exposure: 1.04,
+    })
     assert.equal(await page.locator('#twisterSelect').inputValue(), 'tornado')
     assert.equal(
       await page.locator('#twisterSelectShell').evaluate(
@@ -357,13 +369,23 @@ async function runVariant(browser, backend) {
     assert.equal(environmentVfx.debrisIsInstanced, true)
     assert.equal(environmentVfx.contactLightIsPointLight, true)
 
-    for (const [preset, activeLines, angularSpeed] of [
-      ['water', 304, 27.48],
-      ['fire', 320, 29.472],
+    for (const [preset, activeLines, angularSpeed, bloomLook] of [
+      ['water', 304, 27.48, {
+        strength: 0.26,
+        radius: 0.26,
+        threshold: 1.1,
+        exposure: 1.02,
+      }],
+      ['fire', 320, 29.472, {
+        strength: 0.82,
+        radius: 0.36,
+        threshold: 0.48,
+        exposure: 0.88,
+      }],
     ]) {
       await page.locator('#twisterSelect').selectOption(preset)
       await page.waitForFunction(
-        ([expectedPreset, expectedLines, expectedAngularSpeed]) => {
+        ([expectedPreset, expectedLines, expectedAngularSpeed, expectedBloom]) => {
           const state = globalThis.__threeWindlineDemo?.snapshot()
           return state?.preset === expectedPreset
             && Number(state?.windline?.count) === expectedLines
@@ -373,10 +395,15 @@ async function runVariant(browser, backend) {
             && Math.abs(
               Number(state?.vortexMotion?.angularSpeed) - expectedAngularSpeed,
             ) < 1e-6
+            && Object.entries(expectedBloom).every(
+              ([key, value]) => Number(state?.bloom?.[key]) === value,
+            )
         },
-        [preset, activeLines, angularSpeed],
+        [preset, activeLines, angularSpeed, bloomLook],
         { timeout },
       )
+      const state = normalizeSnapshot(await page.evaluate(readDemoSnapshot))
+      assert.deepEqual(state.raw.bloom, bloomLook)
     }
     const vortexBasePath = variantScreenshotPath(backend)
     const vortexExtension = extname(vortexBasePath)
@@ -520,6 +547,17 @@ async function runVariant(browser, backend) {
 
     let shaderBudget
     if (backend === 'webgpu') {
+      const bloomShaders = await page.evaluate(() => (
+        globalThis.__THREE_WINDLINE_SHADERS__
+          .map(shader => shader.label)
+          .filter(label => label.includes('Bloom_'))
+      ))
+      for (const stage of ['Bloom_highPass', 'Bloom_separable', 'Bloom_comp']) {
+        assert.ok(
+          bloomShaders.some(label => label.includes(stage)),
+          `WebGPU did not compile ${stage}`,
+        )
+      }
       shaderBudget = await page.evaluate(() => {
         const count = (source, token) => source.split(token).length - 1
         return globalThis.__THREE_WINDLINE_SHADERS__

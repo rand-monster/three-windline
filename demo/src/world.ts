@@ -1326,32 +1326,32 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
       targetFog.set(0x657d7c)
       targetSunIntensity = 1.6
     } else if (preset === 'water') {
-      targetMarker.setColor(0x57e7ff)
-      targetFog.set(0x80abb2)
+      targetMarker.setColor(0xbcefff)
+      targetFog.set(0x9cc4ca)
       targetSunIntensity = 4.35
-      vortex.dust.material.color.set(0x89ddff)
-      vortex.glow.material.color.set(0x37cfff)
-      vortex.halo.material.color.set(0x159fda)
-      vortex.contactLight.color.set(0x4bdcff)
-      vortexGlowStrength = 0.34
-      vortexHaloStrength = 0.075
-      vortexContactLightIntensity = 105
+      vortex.dust.material.color.set(0xdaf9ff)
+      vortex.glow.material.color.set(0x8de4ff)
+      vortex.halo.material.color.set(0x4abce8)
+      vortex.contactLight.color.set(0xc6f4ff)
+      vortexGlowStrength = 0.44
+      vortexHaloStrength = 0.09
+      vortexContactLightIntensity = 125
       for (const [index, ring] of vortex.rings.entries()) {
-        ring.material.color.set(index % 2 === 0 ? 0x91eaff : 0xdffbff)
+        ring.material.color.set(index % 2 === 0 ? 0xe9fdff : 0x68d3ff)
       }
     } else if (preset === 'fire') {
       targetMarker.setColor(0xffa34f)
-      targetFog.set(0xa99a82)
-      targetSunIntensity = 4.55
-      vortex.dust.material.color.set(0xff7a24)
-      vortex.glow.material.color.set(0xff5b16)
-      vortex.halo.material.color.set(0xff3a08)
-      vortex.contactLight.color.set(0xff6a28)
-      vortexGlowStrength = 0.48
+      targetFog.set(0x4f514d)
+      targetSunIntensity = 1.4
+      vortex.dust.material.color.set(0xffffc0)
+      vortex.glow.material.color.set(0xff8a00)
+      vortex.halo.material.color.set(0xff3d00)
+      vortex.contactLight.color.set(0xff5418)
+      vortexGlowStrength = 0.62
       vortexHaloStrength = 0.11
-      vortexContactLightIntensity = 145
+      vortexContactLightIntensity = 185
       for (const [index, ring] of vortex.rings.entries()) {
-        ring.material.color.set(index % 2 === 0 ? 0xff8a2b : 0xffdda1)
+        ring.material.color.set(index % 2 === 0 ? 0xffffd0 : 0xff7a08)
       }
     } else if (preset === 'tornado') {
       targetMarker.setColor(0xcfffd0)

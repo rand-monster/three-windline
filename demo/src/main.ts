@@ -10,6 +10,8 @@ import {
 } from 'lucide'
 import * as THREE from 'three/webgpu'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { bloom } from 'three/addons/tsl/display/BloomNode.js'
+import { pass } from 'three/tsl'
 import {
   CoherentWindField,
   UniformWindField,
@@ -43,6 +45,13 @@ interface DemoControls {
   curveTurns: number
 }
 
+interface DemoBloomLook {
+  readonly strength: number
+  readonly radius: number
+  readonly threshold: number
+  readonly exposure: number
+}
+
 interface PresetDefinition {
   readonly id: DemoPresetId
   readonly index: string
@@ -52,6 +61,7 @@ interface PresetDefinition {
   readonly curve: WindLineCurve
   readonly controls: DemoControls
   readonly colors: readonly [THREE.ColorRepresentation, THREE.ColorRepresentation]
+  readonly colorBanding?: number
   readonly curveAmplitude: readonly [number, number]
   readonly regionRadius: number
   readonly verticalHalfSpan: number
@@ -80,6 +90,7 @@ interface DemoSnapshot {
   readonly fps: number
   readonly draws: number
   readonly controls: Readonly<DemoControls>
+  readonly bloom: Readonly<DemoBloomLook>
   readonly vortex: Readonly<DemoVortexLook>
   readonly vortexMotion: {
     readonly angularSpeed: number
@@ -191,12 +202,13 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
       gust: 11,
       length: 11.5,
       width: 3.1,
-      opacity: 0.76,
+      opacity: 0.72,
       colorRandomness: 0,
       curveSweep: 180,
       curveTurns: 0.9,
     },
-    colors: [0xe5ffff, 0x68d9ff],
+    colors: [0xffffff, 0x0080ff],
+    colorBanding: 1,
     curveAmplitude: [0.28, 0.1],
     regionRadius: 9.2,
     verticalHalfSpan: 13,
@@ -205,11 +217,11 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     speedRange: [4, 17],
     fieldSpeedMultiplier: 1.05,
     vortexSurface: {
-      colors: [0x022d53, 0x168eaf],
-      roughness: 0.2,
-      specular: 0.72,
-      rim: 0.36,
-      emission: 0.025,
+      colors: [0xffffff, 0x0068d8],
+      roughness: 0.14,
+      specular: 0.6,
+      rim: 0.45,
+      emission: 0.04,
     },
   },
   fire: {
@@ -230,7 +242,8 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
       curveSweep: 180,
       curveTurns: 0.95,
     },
-    colors: [0xfff0a8, 0xff6a24],
+    colors: [0xff2a00, 0xffffb0],
+    colorBanding: 1,
     curveAmplitude: [0.32, 0.12],
     regionRadius: 9.2,
     verticalHalfSpan: 13,
@@ -239,11 +252,11 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     speedRange: [5, 19],
     fieldSpeedMultiplier: 1.12,
     vortexSurface: {
-      colors: [0x270201, 0xc92f08],
-      roughness: 0.52,
-      specular: 0.18,
-      rim: 0.12,
-      emission: 0.2,
+      colors: [0x080000, 0xff8a00],
+      roughness: 0.44,
+      specular: 0.05,
+      rim: 0.1,
+      emission: 1.2,
     },
   },
   storm: {
@@ -273,6 +286,39 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     speedRange: [5, 34],
     fieldSpeedMultiplier: 1.75,
   },
+})
+
+const BLOOM_LOOKS: Readonly<Record<DemoPresetId, DemoBloomLook>> = Object.freeze({
+  breeze: Object.freeze({
+    strength: 0.12,
+    radius: 0.16,
+    threshold: 1.18,
+    exposure: 1.06,
+  }),
+  tornado: Object.freeze({
+    strength: 0.2,
+    radius: 0.18,
+    threshold: 1.08,
+    exposure: 1.04,
+  }),
+  water: Object.freeze({
+    strength: 0.26,
+    radius: 0.26,
+    threshold: 1.1,
+    exposure: 1.02,
+  }),
+  fire: Object.freeze({
+    strength: 0.82,
+    radius: 0.36,
+    threshold: 0.48,
+    exposure: 0.88,
+  }),
+  storm: Object.freeze({
+    strength: 0.16,
+    radius: 0.2,
+    threshold: 1.12,
+    exposure: 0.98,
+  }),
 })
 
 const DEFAULT_CAMERA_POSITION = new THREE.Vector3(35, 22, 48)
@@ -430,6 +476,17 @@ async function start(): Promise<void> {
   controls.update()
 
   const world = createDemoWorld(scene)
+  const scenePass = pass(scene, camera)
+  const sceneColor = scenePass.getTextureNode('output')
+  const initialBloom = BLOOM_LOOKS.breeze
+  const bloomPass = bloom(
+    sceneColor,
+    initialBloom.strength,
+    initialBloom.radius,
+    initialBloom.threshold,
+  ).setResolutionScale(0.4)
+  const renderPipeline = new THREE.RenderPipeline(renderer)
+  renderPipeline.outputNode = sceneColor.add(bloomPass)
   const terrainTarget = world.root.getObjectByName('windline-demo-terrain')
   const targetRaycaster = new THREE.Raycaster()
   const targetPointer = new THREE.Vector2()
@@ -499,6 +556,7 @@ async function start(): Promise<void> {
       widthWorldUnits: [0.42, 1.85],
       colors: [0x073b32, 0x7fc99a],
       colorRandomness: 0,
+      colorBanding: 0,
       opacity: 0.96,
       nearFade: [2, 5],
       farFade: [138, 205],
@@ -644,6 +702,7 @@ async function start(): Promise<void> {
       ],
       opacity: THREE.MathUtils.clamp(0.72 + volume * 0.28, 0, 1),
       colors: surface.colors,
+      colorBanding: definition.colorBanding ?? 0,
       surfaceRoughness: surface.roughness,
       surfaceSpecular: surface.specular,
       surfaceRim: surface.rim,
@@ -662,6 +721,7 @@ async function start(): Promise<void> {
       widthCssPixels: [minimumWidth, maximumWidth],
       colors: definition.colors,
       colorRandomness: runtimeControls.colorRandomness,
+      colorBanding: definition.colorBanding ?? 0,
       opacity: runtimeControls.opacity,
       curveAmplitude: definition.curveAmplitude,
       curveSweepRadians: THREE.MathUtils.degToRad(runtimeControls.curveSweep),
@@ -719,6 +779,11 @@ async function start(): Promise<void> {
     windline.setField(activeField)
     windline.setCount(runtimeControls.density)
     applyStyle(definition)
+    const bloomLook = BLOOM_LOOKS[preset]
+    bloomPass.strength.value = bloomLook.strength
+    bloomPass.radius.value = bloomLook.radius
+    bloomPass.threshold.value = bloomLook.threshold
+    renderer.toneMappingExposure = bloomLook.exposure
     world.setPreset(preset)
     world.setVortexLook(vortexLook)
     if (isVortexPreset(preset)) vortexBody.setField(fields.tornado)
@@ -823,6 +888,12 @@ async function start(): Promise<void> {
       fps,
       draws,
       controls: Object.freeze({ ...runtimeControls }),
+      bloom: Object.freeze({
+        strength: bloomPass.strength.value,
+        radius: bloomPass.radius.value,
+        threshold: bloomPass.threshold.value,
+        exposure: renderer.toneMappingExposure,
+      }),
       vortex: Object.freeze({ ...vortexLook }),
       vortexMotion: Object.freeze({
         angularSpeed: fields.tornado.angularSpeed,
@@ -847,6 +918,9 @@ async function start(): Promise<void> {
     windline.dispose()
     vortexBody.dispose()
     world.dispose()
+    renderPipeline.dispose()
+    bloomPass.dispose()
+    scenePass.dispose()
     renderer.dispose()
     renderer.domElement.remove()
     if (globalThis.__threeWindlineDemo === bridge) globalThis.__threeWindlineDemo = undefined
@@ -1008,7 +1082,7 @@ async function start(): Promise<void> {
       active: isVortexPreset(activePreset),
       intensity: 1,
     })
-    renderer.render(scene, camera)
+    renderPipeline.render()
 
     frames += 1
     frameWindowCount += 1

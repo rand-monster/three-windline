@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.3.4 - 2026-07-25
+
+### Changed
+
+- Adds a unified TSL `RenderPipeline` bloom pass for WebGPU and the WebGL2
+  fallback, rendered at `0.4x` resolution with preset-specific strength,
+  radius, threshold, and tone-mapping exposure.
+- Recolors Water Vortex as distinct white and clear-blue ribbon groups, with
+  pale-blue fog, contact light, ground rings, and restrained bloom.
+- Reworks Fire Vortex around the supplied fire-tornado reference: dark inner
+  bands, HDR orange body ribbons, white-hot accent trails, brighter embers,
+  local fire lighting, and a strong orange bloom halo.
+- Adds opt-in `colorBanding` and enables it for the Water and Fire presets so
+  authored palette endpoints remain readable; the default `0` preserves
+  existing continuous color interpolation.
+- Extends the browser smoke test to verify every preset's post-processing look
+  and the WebGPU high-pass, blur, and composite bloom shaders.
+
 ## 0.3.3 - 2026-07-25
 
 ### Changed

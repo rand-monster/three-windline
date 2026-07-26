@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.8 - 2026-07-26
+
+### Fixed
+
+- Makes the documented one-draw wind-line contract true at the renderer
+  backend by forcing transparent double-sided ribbons through a single pass.
+  This removes one redundant draw submission per visible wind-line system.
+- Extends the real-browser WebGPU and WebGL2 checks to compare the public
+  `drawCalls` statistic against calls observed at the renderer backend.
+
 ## 0.3.7 - 2026-07-26
 
 ### Changed

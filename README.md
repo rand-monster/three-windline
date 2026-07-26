@@ -11,9 +11,9 @@ Camera-facing ribbons keep a stable screen-space width, while vortex ribbons
 can use a radial frame and world-space width. It targets Three.js r185
 `WebGPURenderer` and uses one instanced draw per wind-line system.
 
-> **Pre-release:** the package metadata declares the name `three-windline`, but
-> this repository does not claim that an npm release is available yet. Use a
-> local checkout until the first registry release is announced.
+> **Pre-release:** tagged source releases are published on GitHub, but the npm
+> package is not published yet. Use a local checkout until the first registry
+> release is announced.
 
 The package is ESM-only. It does not expose a CommonJS `require()` entry.
 
@@ -42,6 +42,20 @@ funnel with a 64-meter crown and 5,248 GPU-instanced airborne objects while
 retaining the existing `storm` preset ID. With a vortex active, click or tap
 the terrain without dragging to move its target; the funnel eases toward the
 selected point.
+
+## Repository Layout
+
+All library, demo, deployment, and verification source is tracked in this
+public repository. The live demo does not depend on a closed runtime component.
+
+| Path | Purpose |
+| --- | --- |
+| `src/` | Published wind-line library and built-in wind fields. |
+| `demo/src/` | WebGPU/WebGL2 demo, world presentation, and Hurricane debris VFX. |
+| `worker/` | Cloudflare Worker entry point serving the static demo. |
+| `tests/` | Deterministic library and rendering-contract tests. |
+| `scripts/` | Real-browser WebGPU/WebGL2 smoke and screenshot verification. |
+| `docs/lookdev/` | Committed visual targets used during look development. |
 
 ## Install
 

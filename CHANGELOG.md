@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.7 - 2026-07-26
+
+### Changed
+
+- Extracts the demo-only Hurricane debris generator from the world assembly
+  into a focused module without changing its rendering, simulation, or
+  performance contract.
+- Documents the repository layout and explicitly identifies the public source
+  for the library, demo, browser worker, tests, and verification tooling.
+
 ## 0.3.6 - 2026-07-26
 
 ### Changed

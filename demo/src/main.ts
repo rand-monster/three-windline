@@ -10,7 +10,6 @@ import {
 import * as THREE from 'three/webgpu'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import {
-  AffineWindField,
   CoherentWindField,
   UniformWindField,
   VortexWindField,
@@ -136,36 +135,9 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     speedRange: [4, 32],
     fieldSpeedMultiplier: 1.8,
   },
-  shear: {
-    id: 'shear',
-    index: '02',
-    label: 'Canyon Shear',
-    fieldLabel: 'affine',
-    metric: '11.2 m/s',
-    curve: 'arc',
-    controls: {
-      density: 320,
-      speed: 1.15,
-      gust: 8,
-      length: 26,
-      width: 2.2,
-      opacity: 0.72,
-      colorRandomness: 0.24,
-      curveSweep: 132,
-      curveTurns: 1.5,
-    },
-    colors: [0xffd08d, 0xbff7e8],
-    curveAmplitude: [3.4, 1.15],
-    regionRadius: 58,
-    verticalHalfSpan: 20,
-    centerLift: 11,
-    lifetime: [1.8, 4.8],
-    speedRange: [4, 30],
-    fieldSpeedMultiplier: 1.6,
-  },
   tornado: {
     id: 'tornado',
-    index: '03',
+    index: '02',
     label: 'Tornado',
     fieldLabel: 'vortex',
     metric: '1.55 rad/s',
@@ -199,7 +171,7 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
   },
   water: {
     id: 'water',
-    index: '04',
+    index: '03',
     label: 'Water Vortex',
     fieldLabel: 'vortex · water',
     metric: '1.62 rad/s',
@@ -233,7 +205,7 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
   },
   fire: {
     id: 'fire',
-    index: '05',
+    index: '04',
     label: 'Fire Vortex',
     fieldLabel: 'vortex · fire',
     metric: '1.78 rad/s',
@@ -267,7 +239,7 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
   },
   storm: {
     id: 'storm',
-    index: '06',
+    index: '05',
     label: 'Storm Front',
     fieldLabel: 'coherent',
     metric: '17.5 m/s',
@@ -454,10 +426,9 @@ async function start(): Promise<void> {
   let targetPointerId = -1
   const fields = {
     breeze: new UniformWindField(),
-    shear: new AffineWindField(),
     tornado: new VortexWindField(),
     storm: new CoherentWindField(),
-  } satisfies Record<'breeze' | 'shear' | 'tornado' | 'storm', WindField>
+  } satisfies Record<'breeze' | 'tornado' | 'storm', WindField>
   const runtimeControls: DemoControls = { ...PRESETS.breeze.controls }
   const vortexLook = { ...DEFAULT_VORTEX_LOOK }
   let activePreset: DemoPresetId = 'breeze'
@@ -599,26 +570,13 @@ async function start(): Promise<void> {
       fields.breeze.setVelocity(BREEZE_DIRECTION.clone().multiplyScalar(6.8 * speed))
       return fields.breeze
     }
-    if (preset === 'shear') {
-      fields.shear.configure({
-        origin: world.anchor,
-        velocity: [8.4 * speed, 0.25, 3.2 * speed],
-        jacobian: [
-          0.002, 0, 0.038 + gust * 0.002,
-          0, 0, 0.006,
-          -0.016, 0, -0.002,
-        ],
-        turbulence: gust * 0.1,
-      })
-      return fields.shear
-    }
     if (isVortexPreset(preset)) {
       fields.tornado.configure({
         center: world.vortexCenter,
         baseVelocity: [0.12 * speed, 0, 0.04],
-        angularSpeed: 1.85 * speed + gust * 0.022,
+        angularSpeed: 3.1 * speed + gust * 0.035,
         radialInflow: 0.5 + gust * 0.015,
-        lift: 4.2 + gust * 0.08,
+        lift: 6 + gust * 0.12,
         turbulence: 0.42 + gust * 0.022,
         softeningRadius: 6,
         envelope: {

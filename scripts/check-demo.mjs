@@ -279,6 +279,36 @@ async function runVariant(browser, backend) {
     assert.equal(tornado.raw.vortexBody.drawCalls, 1)
     assert.equal(tornado.raw.vortexBody.triangles, 144 * 12 * 2)
     assert.equal(tornado.raw.vortexBody.dynamicInstanceUploads, 0)
+    const environmentVfx = await page.evaluate(() => {
+      const scene = globalThis.__threeWindlineDemo?.scene
+      const grass = scene?.getObjectByName('windline-demo-grass')
+      const debris = scene?.getObjectByName('windline-demo-vortex-ground-debris')
+      const contactLight = scene?.getObjectByName('windline-demo-vortex-contact-light')
+      const grassRoot = grass?.geometry?.getAttribute?.('aGrassRoot')
+      const matrices = grass?.instanceMatrix?.array
+      let maximumBladeHeight = 0
+      if (matrices) {
+        for (let offset = 5; offset < matrices.length; offset += 16) {
+          maximumBladeHeight = Math.max(maximumBladeHeight, matrices[offset])
+        }
+      }
+      return {
+        grassCount: Number(grass?.count),
+        grassRootCount: Number(grassRoot?.count),
+        grassRootItemSize: Number(grassRoot?.itemSize),
+        maximumBladeHeight,
+        debrisCount: Number(debris?.count),
+        debrisIsInstanced: debris?.isInstancedMesh === true,
+        contactLightIsPointLight: contactLight?.isPointLight === true,
+      }
+    })
+    assert.equal(environmentVfx.grassCount, 36_000)
+    assert.equal(environmentVfx.grassRootCount, 36_000)
+    assert.equal(environmentVfx.grassRootItemSize, 2)
+    assert.ok(environmentVfx.maximumBladeHeight >= 4.9)
+    assert.equal(environmentVfx.debrisCount, 1_100)
+    assert.equal(environmentVfx.debrisIsInstanced, true)
+    assert.equal(environmentVfx.contactLightIsPointLight, true)
 
     for (const [preset, activeLines] of [
       ['water', 304],
@@ -304,14 +334,41 @@ async function runVariant(browser, backend) {
         { timeout },
       )
     }
+    const vortexBasePath = variantScreenshotPath(backend)
+    const vortexExtension = extname(vortexBasePath)
+    const vortexTargetPath = vortexExtension.length > 0
+      ? `${vortexBasePath.slice(0, -vortexExtension.length)}-vortex${vortexExtension}`
+      : `${vortexBasePath}-vortex.png`
+    await mkdir(dirname(vortexTargetPath), { recursive: true })
+    const vortexScreenshot = await canvas.screenshot({ path: vortexTargetPath })
+    const vortexPixels = analyzePixels(vortexScreenshot)
+    assertRenderedPixels(vortexPixels, `${backend} vortex`)
 
     const vortexPositionBeforeClick = await page.evaluate(
       () => globalThis.__threeWindlineDemo?.scene
         .getObjectByName('windline-demo-vortex-guide')
-        ?.position.toArray(),
+      ?.position.toArray(),
     )
     assert.ok(Array.isArray(vortexPositionBeforeClick))
-    await page.mouse.click(1_000, 650)
+    const canvasBounds = await canvas.boundingBox()
+    assert.ok(canvasBounds)
+    await page.mouse.click(
+      canvasBounds.x + canvasBounds.width * 0.78,
+      canvasBounds.y + canvasBounds.height * 0.81,
+    )
+    await page.waitForTimeout(500)
+    const vortexPositionAfterClick = await page.evaluate(
+      () => globalThis.__threeWindlineDemo?.scene
+        .getObjectByName('windline-demo-vortex-guide')
+        ?.position.toArray(),
+    )
+    assert.ok(Array.isArray(vortexPositionAfterClick))
+    const initialTravel = Math.hypot(
+      vortexPositionAfterClick[0] - vortexPositionBeforeClick[0],
+      vortexPositionAfterClick[2] - vortexPositionBeforeClick[2],
+    )
+    assert.ok(initialTravel > 0.3, 'vortex did not begin moving toward the click target')
+    assert.ok(initialTravel < 4.5, `vortex target movement snapped ${initialTravel.toFixed(2)} m`)
     await page.waitForFunction(
       before => {
         const position = globalThis.__threeWindlineDemo?.scene
@@ -490,6 +547,8 @@ async function runVariant(browser, backend) {
       deviceScaleFactor: initialSizing.dpr,
       screenshot: targetPath,
       pixels,
+      vortexScreenshot: vortexTargetPath,
+      vortexPixels,
     }
   } finally {
     await context.close()

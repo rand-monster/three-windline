@@ -1,5 +1,24 @@
 # Changelog
 
+## 0.3.1 - 2026-07-25
+
+### Changed
+
+- Vortex targets now travel across the terrain at a bounded `6.5 m/s` with a
+  smooth final approach instead of rapidly interpolating most of the distance.
+  The GPU grass response follows the moving vortex center.
+- Increased vortex angular transport, vertical lift, and the three animated
+  axis-wander frequencies so the funnel twists quickly while its world-space
+  target moves slowly.
+- Raised the 36k-blade instanced grass field and added per-blade world roots,
+  so vegetation bends and trembles locally around the moving vortex instead
+  of reacting as one sheet.
+- Added terrain pressure rings, a local contact light, and single-draw
+  instanced debris for clearer Wind, Water, and Fire impact without camera
+  shake.
+- Removed Canyon Shear from the focused demo navigation. `AffineWindField` and
+  all six public curve programs remain part of the package.
+
 ## 0.3.0 - 2026-07-25
 
 ### Added

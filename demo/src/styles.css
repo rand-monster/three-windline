@@ -147,7 +147,7 @@ button {
 
 .preset-switcher {
   display: flex;
-  min-width: 674px;
+  min-width: 580px;
   height: 44px;
   align-items: center;
   justify-content: center;
@@ -643,7 +643,7 @@ button {
   }
 
   .preset-switcher {
-    min-width: 620px;
+    min-width: 540px;
   }
 
   .preset-button {

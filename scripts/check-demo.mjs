@@ -318,6 +318,7 @@ async function runVariant(browser, backend) {
     assert.equal(tornado.raw.vortexBody.drawCalls, 1)
     assert.equal(tornado.raw.vortexBody.triangles, 144 * 12 * 2)
     assert.equal(tornado.raw.vortexBody.dynamicInstanceUploads, 0)
+    assert.ok(Math.abs(tornado.raw.vortexMotion.angularSpeed - 26.16) < 1e-6)
     assert.equal(await page.locator('#twisterSelect').inputValue(), 'tornado')
     assert.equal(
       await page.locator('#twisterSelectShell').evaluate(
@@ -356,21 +357,24 @@ async function runVariant(browser, backend) {
     assert.equal(environmentVfx.debrisIsInstanced, true)
     assert.equal(environmentVfx.contactLightIsPointLight, true)
 
-    for (const [preset, activeLines] of [
-      ['water', 304],
-      ['fire', 320],
+    for (const [preset, activeLines, angularSpeed] of [
+      ['water', 304, 27.48],
+      ['fire', 320, 29.472],
     ]) {
       await page.locator('#twisterSelect').selectOption(preset)
       await page.waitForFunction(
-        ([expectedPreset, expectedLines]) => {
+        ([expectedPreset, expectedLines, expectedAngularSpeed]) => {
           const state = globalThis.__threeWindlineDemo?.snapshot()
           return state?.preset === expectedPreset
             && Number(state?.windline?.count) === expectedLines
             && Number(state?.windline?.drawCalls) === 1
             && Number(state?.vortexBody?.count) === 144
             && Number(state?.vortexBody?.drawCalls) === 1
+            && Math.abs(
+              Number(state?.vortexMotion?.angularSpeed) - expectedAngularSpeed,
+            ) < 1e-6
         },
-        [preset, activeLines],
+        [preset, activeLines, angularSpeed],
         { timeout },
       )
     }

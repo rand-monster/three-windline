@@ -82,6 +82,7 @@ interface DemoSnapshot {
   readonly controls: Readonly<DemoControls>
   readonly vortex: Readonly<DemoVortexLook>
   readonly vortexMotion: {
+    readonly angularSpeed: number
     readonly speed: number
     readonly velocity: readonly number[]
     readonly lean: readonly number[]
@@ -148,7 +149,7 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     index: '02',
     label: 'Tornado',
     fieldLabel: 'vortex',
-    metric: '1.55 rad/s',
+    metric: '26.16 rad/s',
     curve: 'straight',
     controls: {
       density: 288,
@@ -182,7 +183,7 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     index: '03',
     label: 'Water Vortex',
     fieldLabel: 'vortex · water',
-    metric: '1.62 rad/s',
+    metric: '27.48 rad/s',
     curve: 'straight',
     controls: {
       density: 304,
@@ -216,7 +217,7 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     index: '04',
     label: 'Fire Vortex',
     fieldLabel: 'vortex · fire',
-    metric: '1.78 rad/s',
+    metric: '29.47 rad/s',
     curve: 'straight',
     controls: {
       density: 320,
@@ -586,9 +587,9 @@ async function start(): Promise<void> {
       fields.tornado.configure({
         center: world.vortexCenter,
         baseVelocity: [0.12 * speed, 0, 0.04],
-        angularSpeed: 7.2 * speed + gust * 0.08,
-        radialInflow: 0.5 + gust * 0.015,
-        lift: 6 + gust * 0.12,
+        angularSpeed: 21.6 * speed + gust * 0.24,
+        radialInflow: 3 + gust * 0.09,
+        lift: 36 + gust * 0.72,
         turbulence: 0.42 + gust * 0.022,
         softeningRadius: 6,
         envelope: {
@@ -824,6 +825,7 @@ async function start(): Promise<void> {
       controls: Object.freeze({ ...runtimeControls }),
       vortex: Object.freeze({ ...vortexLook }),
       vortexMotion: Object.freeze({
+        angularSpeed: fields.tornado.angularSpeed,
         speed: Math.hypot(world.vortexVelocity.x, world.vortexVelocity.z),
         velocity: Object.freeze(world.vortexVelocity.toArray()),
         lean: Object.freeze(world.vortexLean.toArray()),

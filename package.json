@@ -1,6 +1,6 @@
 {
   "name": "three-windline",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Deterministic, camera-stable GPU wind ribbons for Three.js WebGPURenderer.",
   "type": "module",
   "license": "MIT",

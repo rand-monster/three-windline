@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.3.3 - 2026-07-25
+
+### Changed
+
+- Triples Twister angular transport from `7.2 * speed + gust * 0.08` to
+  `21.6 * speed + gust * 0.24`, producing roughly one visible rotation every
+  `0.16-0.38` seconds depending on radial layer, preset, and instance.
+- Keeps the animated funnel-axis rate capped independently so the faster
+  circulation remains readable without turning silhouette motion into jitter.
+- Scales lift and radial contraction by `6x`, roughly doubling the nominal
+  helical pitch so broad diagonal ribbons remain dominant at the new `3x`
+  circulation speed instead of flattening into horizontal rings.
+- Normalizes signed position seeds before applying the new radius and orbital
+  variation ranges, keeping those random factors inside their documented
+  bounds.
+
 ## 0.3.2 - 2026-07-25
 
 ### Changed

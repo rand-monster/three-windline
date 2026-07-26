@@ -90,7 +90,7 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
     layeredRadius,
     mix(1.02, 1.2, radialUnit),
     outerLayer,
-  ).mul(mix(0.9, 1.12, seed.x))
+  ).mul(mix(0.9, 1.12, seed.x.mul(0.5).add(0.5)))
   const layerWeight = mix(
     mix(0.72, 1, shellSelector),
     0.58,
@@ -113,7 +113,7 @@ export function createVortexPath(context: VortexPathContext): VortexPath {
   )
   const instanceAngularSpeed = angularSpeed.mul(
     mix(1.32, 0.76, clamp(initialRadiusRatio, 0, 1)),
-  ).mul(mix(0.84, 1.18, seed.z))
+  ).mul(mix(0.84, 1.18, seed.z.mul(0.5).add(0.5)))
   const headRadius = headEnvelope.mul(headContraction)
   const horizontalDrift = vec3(
     fieldVelocity.x.sub(observerVelocity.x),

@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.3.6 - 2026-07-26
+
+### Changed
+
+- Expands Hurricane from an 18.6-meter crown radius to 64 meters and raises
+  its envelope to 84 meters, with 1,536 shell ribbons, 576 radial body ribbons,
+  farther camera fades, and a dedicated disaster-scale composition.
+- Adds 5,248 solid GPU-instanced airborne objects across light paper and leaf
+  fragments, tumbling wood and metal pieces, and heavy rock ejecta. All lift,
+  orbit, flutter, tumble, and lifecycle motion remains vertex-driven with no
+  per-frame instance uploads.
+- Widens the terrain vegetation coverage, gives Hurricane a stronger grass
+  pressure response, limits targets to the available world, and extends its
+  fog, lighting, and shadow footprint.
+
 ## 0.3.5 - 2026-07-25
 
 ### Changed

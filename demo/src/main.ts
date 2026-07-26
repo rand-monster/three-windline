@@ -268,10 +268,10 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     metric: '40.50 rad/s',
     curve: 'straight',
     controls: {
-      density: 640,
+      density: 1536,
       speed: 1.35,
       gust: 18,
-      length: 16,
+      length: 34,
       width: 4.2,
       opacity: 0.5,
       colorRandomness: 0,
@@ -281,9 +281,9 @@ const PRESETS: Readonly<Record<DemoPresetId, PresetDefinition>> = Object.freeze(
     colors: [0xf2fdff, 0x82d4e6],
     colorBanding: 0.4,
     curveAmplitude: [0.42, 0.18],
-    regionRadius: 18.6,
-    verticalHalfSpan: 23,
-    centerLift: 0,
+    regionRadius: 64,
+    verticalHalfSpan: 42,
+    centerLift: 42,
     lifetime: [2.4, 5.2],
     speedRange: [5, 23],
     fieldSpeedMultiplier: 1.15,
@@ -332,8 +332,8 @@ const BLOOM_LOOKS: Readonly<Record<DemoPresetId, DemoBloomLook>> = Object.freeze
 
 const DEFAULT_CAMERA_POSITION = new THREE.Vector3(35, 22, 48)
 const DEFAULT_CAMERA_TARGET = new THREE.Vector3(0, 7.2, 8)
-const HURRICANE_CAMERA_OFFSET = new THREE.Vector3(58, 34, 72)
-const HURRICANE_CAMERA_TARGET_OFFSET = new THREE.Vector3(0, 22, 0)
+const HURRICANE_CAMERA_OFFSET = new THREE.Vector3(100, 62, 126)
+const HURRICANE_CAMERA_TARGET_OFFSET = new THREE.Vector3(0, 32, 0)
 const OBSERVER_VELOCITY = new THREE.Vector3()
 const BREEZE_DIRECTION = new THREE.Vector3(0.95, 0.025, 0.31).normalize()
 const BREEZE_VELOCITY_SCRATCH = new THREE.Vector3()
@@ -365,14 +365,14 @@ const DEFAULT_VORTEX_LOOK: DemoVortexLook = Object.freeze({
   volume: 1,
 })
 const HURRICANE_VORTEX_LOOK: DemoVortexLook = Object.freeze({
-  height: 46,
-  topRadius: 18.6,
-  axisBend: 1.35,
-  axisWander: 3.4,
+  height: 84,
+  topRadius: 64,
+  axisBend: 1.8,
+  axisWander: 9,
   volume: 1.35,
 })
 const VORTEX_BODY_COUNT = 144
-const HURRICANE_BODY_COUNT = 208
+const HURRICANE_BODY_COUNT = 576
 
 function requiredElement<T extends HTMLElement>(id: string): T {
   const element = document.getElementById(id)
@@ -488,7 +488,7 @@ async function start(): Promise<void> {
   controls.zoomSpeed = 0.72
   controls.panSpeed = 0.48
   controls.minDistance = 22
-  controls.maxDistance = 112
+  controls.maxDistance = 220
   controls.minPolarAngle = 0.22
   controls.maxPolarAngle = Math.PI * 0.48
   controls.update()
@@ -530,7 +530,7 @@ async function start(): Promise<void> {
       scene,
       field,
       curve,
-      capacity: 720,
+      capacity: 1536,
       count: PRESETS.breeze.controls.density,
       segments: 28,
       seed: 0x51a1_f10d,
@@ -567,7 +567,7 @@ async function start(): Promise<void> {
     field: fields.tornado,
     curve: 'straight',
     ribbonMode: 'radial',
-    capacity: 224,
+    capacity: 640,
     count: 0,
     segments: 12,
     seed: 0x70ad_4ace,
@@ -680,7 +680,7 @@ async function start(): Promise<void> {
         turbulence: isHurricane
           ? 0.72 + gust * 0.028
           : 0.42 + gust * 0.022,
-        softeningRadius: isHurricane ? 9.5 : 6,
+        softeningRadius: isHurricane ? 16 : 6,
         envelope: {
           height: vortexLook.height,
           radius: [DEMO_VORTEX_ENVELOPE.radius[0], vortexLook.topRadius],
@@ -741,6 +741,7 @@ async function start(): Promise<void> {
       surfaceSpecular: surface.specular,
       surfaceRim: surface.rim,
       surfaceEmission: surface.emission,
+      farFade: activePreset === 'storm' ? [220, 360] : [138, 205],
     })
   }
 
@@ -763,6 +764,7 @@ async function start(): Promise<void> {
       lifetime: definition.lifetime,
       speed: definition.speedRange,
       fieldSpeedMultiplier: definition.fieldSpeedMultiplier * runtimeControls.speed,
+      farFade: definition.id === 'storm' ? [210, 340] : [118, 178],
     })
   }
 

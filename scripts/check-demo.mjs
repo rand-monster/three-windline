@@ -555,14 +555,14 @@ async function runVariant(browser, backend) {
         const state = globalThis.__threeWindlineDemo?.snapshot()
         return state?.preset === 'storm'
           && state?.curve === 'straight'
-          && Number(state?.windline?.count) === 640
+          && Number(state?.windline?.count) === 1536
           && Number(state?.windline?.drawCalls) === 1
-          && Number(state?.vortexBody?.count) === 208
+          && Number(state?.vortexBody?.count) === 576
           && Number(state?.vortexBody?.drawCalls) === 1
           && Math.abs(Number(state?.vortexMotion?.angularSpeed) - 40.5) < 1e-6
-          && Number(state?.vortex?.height) === 46
-          && Number(state?.vortex?.topRadius) === 18.6
-          && Number(state?.vortex?.axisWander) === 3.4
+          && Number(state?.vortex?.height) === 84
+          && Number(state?.vortex?.topRadius) === 64
+          && Number(state?.vortex?.axisWander) === 9
           && Number(state?.vortex?.volume) === 1.35
       },
       null,
@@ -584,19 +584,55 @@ async function runVariant(browser, backend) {
       true,
     )
     await page.waitForFunction(
-      () => document.querySelector('#lineValue')?.textContent === '640',
+      () => document.querySelector('#lineValue')?.textContent === '1536',
       null,
       { timeout },
     )
     assert.ok(Math.abs(
-      hurricane.raw.camera[0] - hurricane.raw.target[0] - 58,
+      hurricane.raw.camera[0] - hurricane.raw.target[0] - 100,
     ) < 0.01)
     assert.ok(Math.abs(
-      hurricane.raw.camera[1] - hurricane.raw.target[1] - 12,
+      hurricane.raw.camera[1] - hurricane.raw.target[1] - 30,
     ) < 0.01)
     assert.ok(Math.abs(
-      hurricane.raw.camera[2] - hurricane.raw.target[2] - 72,
+      hurricane.raw.camera[2] - hurricane.raw.target[2] - 126,
     ) < 0.01)
+    const airborne = await page.evaluate(() => {
+      const scene = globalThis.__threeWindlineDemo?.scene
+      const group = scene?.getObjectByName('windline-demo-hurricane-airborne')
+      const inspect = name => {
+        const mesh = scene?.getObjectByName(name)
+        return {
+          instanceCount: Number(mesh?.geometry?.instanceCount),
+          instancedGeometry: mesh?.geometry?.isInstancedBufferGeometry === true,
+          hasInstanceMatrix: mesh?.instanceMatrix !== undefined,
+          orbitCount: Number(mesh?.geometry?.getAttribute?.('aHurricaneOrbit')?.count),
+          traitCount: Number(mesh?.geometry?.getAttribute?.('aHurricaneTrait')?.count),
+          shadeCount: Number(mesh?.geometry?.getAttribute?.('aHurricaneShade')?.count),
+        }
+      }
+      return {
+        visible: group?.visible === true,
+        totalCount: Number(group?.userData?.totalCount),
+        light: inspect('windline-demo-hurricane-light-debris'),
+        medium: inspect('windline-demo-hurricane-medium-debris'),
+        hero: inspect('windline-demo-hurricane-hero-debris'),
+      }
+    })
+    assert.equal(airborne.visible, true)
+    assert.equal(airborne.totalCount, 5_248)
+    for (const [layer, count] of [
+      [airborne.light, 4_096],
+      [airborne.medium, 1_024],
+      [airborne.hero, 128],
+    ]) {
+      assert.equal(layer.instanceCount, count)
+      assert.equal(layer.instancedGeometry, true)
+      assert.equal(layer.hasInstanceMatrix, false)
+      assert.equal(layer.orbitCount, count)
+      assert.equal(layer.traitCount, count)
+      assert.equal(layer.shadeCount, count)
+    }
     await page.waitForTimeout(200)
     const hurricaneBasePath = variantScreenshotPath(backend)
     const hurricaneExtension = extname(hurricaneBasePath)

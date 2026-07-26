@@ -8,9 +8,11 @@ import {
   fract,
   instanceIndex,
   mix,
+  normalLocal,
   positionLocal,
   sin,
   smoothstep as tslSmoothstep,
+  transformNormalToView,
   uniform,
   uv,
   vec3,
@@ -70,6 +72,9 @@ const VORTEX_ACCELERATION = 8.5
 const VORTEX_BRAKING = 10.5
 const VORTEX_TURN_ACCELERATION = 12.5
 const VORTEX_LEAN_RESPONSE = 4.2
+const HURRICANE_LIGHT_DEBRIS_COUNT = 4_096
+const HURRICANE_MEDIUM_DEBRIS_COUNT = 1_024
+const HURRICANE_HERO_DEBRIS_COUNT = 128
 const TERRAIN_LOW = new THREE.Color(0x557b4f)
 const TERRAIN_MEADOW = new THREE.Color(0x80a953)
 const TERRAIN_MOSS = new THREE.Color(0x3f7b50)
@@ -495,11 +500,13 @@ function createGrassField() {
         .sub(rootX.mul(0.043))
         .add(rootZ.mul(0.19))
         .add(instance.mul(0.011)),
-    ).mul(0.08),
+  ).mul(0.08),
   ).add(0.82)
 
   const breezeWeight = float(1).sub(clamp(abs(preset), 0, 1))
-  const tornadoWeight = float(1).sub(clamp(abs(preset.sub(1)), 0, 1))
+  const vortexWeight = clamp(preset, 0, 1)
+  const hurricaneWeight = tslSmoothstep(1, 2, preset)
+  const hurricaneForce = mix(1, 1.9, hurricaneWeight)
   const vortexX = rootX.sub(vortexCenter.x)
   const vortexZ = rootZ.sub(vortexCenter.y)
   const vortexRadius = vortexX
@@ -517,7 +524,10 @@ function createGrassField() {
   const vortexTangentZ = vortexX.mul(inverseRadius)
   const vortexInwardX = vortexX.negate().mul(inverseRadius)
   const vortexInwardZ = vortexZ.negate().mul(inverseRadius)
-  const vortexStrength = vortexFalloff.mul(1.62).add(0.08)
+  const vortexStrength = vortexFalloff
+    .mul(1.62)
+    .mul(hurricaneForce)
+    .add(0.08)
   const vortexBuffet = sin(
     time.mul(9.6)
       .add(vortexRadius.mul(1.42))
@@ -527,21 +537,24 @@ function createGrassField() {
       time.mul(15.4)
         .sub(vortexRadius.mul(0.74))
         .add(instance.mul(2.17)),
-    ).mul(0.07),
-  ).mul(vortexFalloff).mul(tornadoWeight)
+  ).mul(0.07),
+  ).mul(vortexFalloff)
+    .mul(vortexWeight)
+    .mul(mix(1, 1.9, hurricaneWeight))
+  const inwardWeight = mix(0.28, 0.46, hurricaneWeight)
   const windX = breezeWeight.mul(0.42 * 0.95)
     .add(
-      tornadoWeight.mul(
+      vortexWeight.mul(
         vortexTangentX
-          .add(vortexInwardX.mul(0.28))
+          .add(vortexInwardX.mul(inwardWeight))
           .mul(vortexStrength),
       ),
     )
   const windZ = breezeWeight.mul(0.42 * 0.31)
     .add(
-      tornadoWeight.mul(
+      vortexWeight.mul(
         vortexTangentZ
-          .add(vortexInwardZ.mul(0.28))
+          .add(vortexInwardZ.mul(inwardWeight))
           .mul(vortexStrength),
       ),
     )
@@ -574,7 +587,7 @@ function createGrassField() {
     .mul(gust.add(abs(vortexBuffet).mul(0.32)))
     .mul(bendPhase)
     .mul(grassFlex)
-    .mul(-0.13)
+    .mul(mix(-0.13, -0.21, hurricaneWeight))
   material.positionNode = positionLocal.add(vec3(bendX, bendDrop, bendZ))
 
   const tipLift = vec3(1.6, 1.7, 0.96)
@@ -607,7 +620,7 @@ function createGrassField() {
   for (let index = 0; index < count; index += 1) {
     const z = (random() - 0.5) * 248
     const center = -Math.sin(z * 0.021) * 7
-    const spread = (random() - 0.5) * 176
+    const spread = (random() - 0.5) * 224
     const x = center + spread
     const y = terrainHeightAt(x, z)
     const size = 1.85 + random() ** 0.72 * 3.15
@@ -920,6 +933,303 @@ function createVortexGuide() {
   }
 }
 
+interface HurricaneDebrisLayerConfig {
+  readonly name: string
+  readonly count: number
+  readonly geometry: THREE.BufferGeometry
+  readonly colors: readonly [number, number]
+  readonly roughness: number
+  readonly metalness: number
+  readonly heightRange: readonly [number, number]
+  readonly periodRange: readonly [number, number]
+  readonly scaleX: readonly [number, number]
+  readonly scaleY: readonly [number, number]
+  readonly scaleZ: readonly [number, number]
+  readonly tumbleRange: readonly [number, number]
+  readonly flutter: readonly [number, number]
+  readonly seed: number
+  readonly doubleSided?: boolean
+  readonly castShadow?: boolean
+}
+
+function createHurricaneDebrisField() {
+  const group = new THREE.Group()
+  group.name = 'windline-demo-hurricane-airborne'
+  group.visible = false
+  const time = uniform(0)
+  const height = uniform(84)
+  const topRadius = uniform(64)
+
+  function createLayer(config: HurricaneDebrisLayerConfig): THREE.Mesh {
+    const geometry = new THREE.InstancedBufferGeometry()
+    geometry.setIndex(config.geometry.index?.clone() ?? null)
+    for (const [name, source] of Object.entries(config.geometry.attributes)) {
+      geometry.setAttribute(name, source.clone())
+    }
+    config.geometry.dispose()
+    geometry.instanceCount = config.count
+    const orbitValues = new Float32Array(config.count * 4)
+    const traitValues = new Float32Array(config.count * 4)
+    const shadeValues = new Float32Array(config.count * 4)
+    const random = mulberry32(config.seed)
+    for (let index = 0; index < config.count; index += 1) {
+      const laneRoll = random()
+      const laneMinimum = laneRoll < 0.25 ? 0.28 : laneRoll < 0.85 ? 0.68 : 1.12
+      const laneMaximum = laneRoll < 0.25 ? 0.62 : laneRoll < 0.85 ? 1.08 : 1.55
+      const angularMinimum = laneRoll < 0.25 ? 3.2 : laneRoll < 0.85 ? 1.8 : 0.8
+      const angularMaximum = laneRoll < 0.25 ? 5.2 : laneRoll < 0.85 ? 3.4 : 1.8
+      orbitValues[index * 4] = (
+        index * 0.754_877_666 + random() * 0.19
+      ) % 1
+      orbitValues[index * 4 + 1] = THREE.MathUtils.lerp(
+        laneMinimum,
+        laneMaximum,
+        random(),
+      )
+      orbitValues[index * 4 + 2] = (
+        index * 0.618_033_989 + random() * 0.17
+      ) % 1 * TAU
+      orbitValues[index * 4 + 3] = THREE.MathUtils.lerp(
+        angularMinimum,
+        angularMaximum,
+        random(),
+      )
+      traitValues[index * 4] = THREE.MathUtils.lerp(
+        config.scaleX[0],
+        config.scaleX[1],
+        random(),
+      )
+      traitValues[index * 4 + 1] = THREE.MathUtils.lerp(
+        config.scaleY[0],
+        config.scaleY[1],
+        random(),
+      )
+      traitValues[index * 4 + 2] = THREE.MathUtils.lerp(
+        config.scaleZ[0],
+        config.scaleZ[1],
+        random(),
+      )
+      const period = THREE.MathUtils.lerp(
+        config.periodRange[0],
+        config.periodRange[1],
+        random(),
+      )
+      traitValues[index * 4 + 3] = 1 / period
+      shadeValues[index * 4] = random()
+      shadeValues[index * 4 + 1] = THREE.MathUtils.lerp(
+        config.tumbleRange[0],
+        config.tumbleRange[1],
+        random(),
+      )
+      shadeValues[index * 4 + 2] = random() * TAU
+      shadeValues[index * 4 + 3] = THREE.MathUtils.lerp(
+        config.flutter[0],
+        config.flutter[1],
+        random(),
+      )
+    }
+    geometry.setAttribute(
+      'aHurricaneOrbit',
+      new THREE.InstancedBufferAttribute(orbitValues, 4),
+    )
+    geometry.setAttribute(
+      'aHurricaneTrait',
+      new THREE.InstancedBufferAttribute(traitValues, 4),
+    )
+    geometry.setAttribute(
+      'aHurricaneShade',
+      new THREE.InstancedBufferAttribute(shadeValues, 4),
+    )
+    geometry.computeBoundingSphere()
+
+    const orbit = attribute<'vec4'>('aHurricaneOrbit', 'vec4')
+    const trait = attribute<'vec4'>('aHurricaneTrait', 'vec4')
+    const shade = attribute<'vec4'>('aHurricaneShade', 'vec4')
+    const age = fract(orbit.x.add(time.mul(trait.w)))
+    const rise = age.pow(0.78)
+    const lifeScale = tslSmoothstep(0, 0.045, age).mul(
+      float(1).sub(tslSmoothstep(0.93, 1, age)),
+    )
+    const envelopeRadius = topRadius.mul(mix(0.08, 1, rise.pow(0.68)))
+    const radiusPulse = sin(
+      time.mul(1.7)
+        .add(orbit.z.mul(1.9))
+        .add(age.mul(11.4)),
+    ).mul(0.07).add(1)
+    const orbitRadius = envelopeRadius.mul(orbit.y).mul(radiusPulse)
+    const angle = orbit.z
+      .add(time.mul(orbit.w))
+      .add(rise.mul(TAU * 1.35))
+      .add(sin(time.mul(2.3).add(shade.z)).mul(0.16))
+    const axisX = sin(time.mul(0.62).add(rise.mul(5.1)))
+      .mul(topRadius)
+      .mul(0.075)
+    const axisZ = cos(time.mul(0.51).add(rise.mul(4.3)).add(1.7))
+      .mul(topRadius)
+      .mul(0.065)
+    const centerX = cos(angle).mul(orbitRadius).add(axisX)
+    const centerY = height
+      .mul(mix(config.heightRange[0], config.heightRange[1], rise))
+      .add(
+        sin(angle.mul(2.7).add(shade.z))
+          .mul(topRadius)
+          .mul(0.018),
+      )
+    const centerZ = sin(angle).mul(orbitRadius).add(axisZ)
+
+    const flutter = sin(
+      time.mul(shade.w.mul(8).add(5.5))
+        .add(shade.z)
+        .add(age.mul(18)),
+    )
+    const pitch = time.mul(shade.y)
+      .add(shade.z)
+      .add(flutter.mul(shade.w).mul(0.9))
+    const yaw = time.mul(shade.y.mul(0.73))
+      .add(shade.z.mul(1.7))
+      .add(age.mul(5.4))
+    const roll = time.mul(shade.y.mul(1.17))
+      .add(shade.z.mul(0.47))
+      .sub(flutter.mul(shade.w).mul(1.1))
+    const pitchCos = cos(pitch)
+    const pitchSin = sin(pitch)
+    const yawCos = cos(yaw)
+    const yawSin = sin(yaw)
+    const rollCos = cos(roll)
+    const rollSin = sin(roll)
+
+    const localX = positionLocal.x.mul(trait.x).mul(lifeScale)
+    const localY = positionLocal.y.mul(trait.y).mul(lifeScale)
+    const localZ = positionLocal.z.mul(trait.z).mul(lifeScale)
+    const pitchX = localX
+    const pitchY = localY.mul(pitchCos).sub(localZ.mul(pitchSin))
+    const pitchZ = localY.mul(pitchSin).add(localZ.mul(pitchCos))
+    const yawX = pitchX.mul(yawCos).add(pitchZ.mul(yawSin))
+    const yawY = pitchY
+    const yawZ = pitchZ.mul(yawCos).sub(pitchX.mul(yawSin))
+    const rotatedX = yawX.mul(rollCos).sub(yawY.mul(rollSin))
+    const rotatedY = yawX.mul(rollSin).add(yawY.mul(rollCos))
+    const rotatedZ = yawZ
+
+    const normalX = normalLocal.x.div(trait.x)
+    const normalY = normalLocal.y.div(trait.y)
+    const normalZ = normalLocal.z.div(trait.z)
+    const normalPitchX = normalX
+    const normalPitchY = normalY.mul(pitchCos).sub(normalZ.mul(pitchSin))
+    const normalPitchZ = normalY.mul(pitchSin).add(normalZ.mul(pitchCos))
+    const normalYawX = normalPitchX.mul(yawCos).add(normalPitchZ.mul(yawSin))
+    const normalYawY = normalPitchY
+    const normalYawZ = normalPitchZ.mul(yawCos).sub(normalPitchX.mul(yawSin))
+    const rotatedNormal = vec3(
+      normalYawX.mul(rollCos).sub(normalYawY.mul(rollSin)),
+      normalYawX.mul(rollSin).add(normalYawY.mul(rollCos)),
+      normalYawZ,
+    ).normalize()
+
+    const firstColor = new THREE.Color(config.colors[0])
+    const secondColor = new THREE.Color(config.colors[1])
+    const material = new THREE.MeshStandardNodeMaterial({
+      color: 0xffffff,
+      roughness: config.roughness,
+      metalness: config.metalness,
+      side: config.doubleSided ? THREE.DoubleSide : THREE.FrontSide,
+      flatShading: true,
+    })
+    material.name = `${config.name}-material`
+    material.positionNode = vec3(rotatedX, rotatedY, rotatedZ).add(vec3(
+      centerX,
+      centerY,
+      centerZ,
+    ))
+    material.normalNode = transformNormalToView(rotatedNormal)
+    const sunFlash = sin(
+      angle.mul(1.4).add(time.mul(0.7)).add(shade.z),
+    ).mul(0.5).add(0.5)
+    const debrisColor = mix(
+      vec3(firstColor.r, firstColor.g, firstColor.b),
+      vec3(secondColor.r, secondColor.g, secondColor.b),
+      shade.x,
+    )
+    material.colorNode = debrisColor.mul(mix(0.72, 1.18, sunFlash))
+    material.emissiveNode = debrisColor.mul(0.018)
+
+    const mesh = new THREE.Mesh(geometry, material)
+    mesh.name = config.name
+    mesh.castShadow = config.castShadow ?? false
+    mesh.receiveShadow = false
+    mesh.frustumCulled = false
+    mesh.renderOrder = 3
+    mesh.userData.instanceCount = config.count
+    group.add(mesh)
+    return mesh
+  }
+
+  const light = createLayer({
+    name: 'windline-demo-hurricane-light-debris',
+    count: HURRICANE_LIGHT_DEBRIS_COUNT,
+    geometry: new THREE.PlaneGeometry(1, 1),
+    colors: [0xd9e8d2, 0xf3e8c7],
+    roughness: 0.78,
+    metalness: 0,
+    heightRange: [0.045, 1.02],
+    periodRange: [7, 13],
+    scaleX: [0.22, 0.82],
+    scaleY: [0.34, 1.28],
+    scaleZ: [0.04, 0.07],
+    tumbleRange: [2.8, 7.2],
+    flutter: [0.45, 1],
+    seed: 0xc10d_1eaf,
+    doubleSided: true,
+  })
+  const medium = createLayer({
+    name: 'windline-demo-hurricane-medium-debris',
+    count: HURRICANE_MEDIUM_DEBRIS_COUNT,
+    geometry: new THREE.BoxGeometry(1, 1, 1),
+    colors: [0x76543b, 0xbb8652],
+    roughness: 0.74,
+    metalness: 0.06,
+    heightRange: [0.07, 0.8],
+    periodRange: [11, 18],
+    scaleX: [0.55, 2.3],
+    scaleY: [0.09, 0.3],
+    scaleZ: [0.2, 0.68],
+    tumbleRange: [1.2, 3.8],
+    flutter: [0.08, 0.38],
+    seed: 0xb04d_5ca7,
+  })
+  const hero = createLayer({
+    name: 'windline-demo-hurricane-hero-debris',
+    count: HURRICANE_HERO_DEBRIS_COUNT,
+    geometry: new THREE.IcosahedronGeometry(0.72, 0),
+    colors: [0x4f5b5d, 0x9d6b4e],
+    roughness: 0.88,
+    metalness: 0.04,
+    heightRange: [0.035, 0.58],
+    periodRange: [16, 25],
+    scaleX: [0.78, 2.1],
+    scaleY: [0.62, 1.65],
+    scaleZ: [0.72, 2],
+    tumbleRange: [0.45, 1.65],
+    flutter: [0.02, 0.14],
+    seed: 0x1ce5_70ae,
+    castShadow: true,
+  })
+  group.userData.totalCount = (
+    HURRICANE_LIGHT_DEBRIS_COUNT
+    + HURRICANE_MEDIUM_DEBRIS_COUNT
+    + HURRICANE_HERO_DEBRIS_COUNT
+  )
+  return {
+    group,
+    time,
+    height,
+    topRadius,
+    light,
+    medium,
+    hero,
+  }
+}
+
 type TargetMarkerPhase = 'hidden' | 'command' | 'waiting' | 'arrival'
 
 interface VortexTargetMarker {
@@ -1195,6 +1505,7 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   const farRidge = createDistantRidge(-224, 55, 0x789b94, 7.4)
   const sculpture = createWindSculpture()
   const vortex = createVortexGuide()
+  const hurricaneDebris = createHurricaneDebrisField()
   const targetMarker = createVortexTargetMarker()
   const skyTexture = createSkyTexture()
   root.add(
@@ -1205,6 +1516,7 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     backRidge,
     sculpture.group,
     vortex.group,
+    hurricaneDebris.group,
     targetMarker.group,
   )
 
@@ -1216,10 +1528,10 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   sun.position.set(-52, 82, -38)
   sun.castShadow = true
   sun.shadow.mapSize.set(2048, 2048)
-  sun.shadow.camera.left = -72
-  sun.shadow.camera.right = 72
-  sun.shadow.camera.top = 72
-  sun.shadow.camera.bottom = -72
+  sun.shadow.camera.left = -120
+  sun.shadow.camera.right = 120
+  sun.shadow.camera.top = 120
+  sun.shadow.camera.bottom = -120
   sun.shadow.camera.near = 1
   sun.shadow.camera.far = 220
   sun.shadow.bias = -0.00025
@@ -1243,6 +1555,7 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   let worldTimeSeconds = 0
   let currentPreset: DemoPresetId = 'breeze'
   let targetSunIntensity = 3.8
+  let targetFogDensity = 0.0037
   let vortexGlowStrength = 0.18
   let vortexHaloStrength = 0.08
   let vortexContactLightIntensity = 48
@@ -1277,8 +1590,8 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
   }
 
   function setVortexLook(look: DemoVortexLook): void {
-    const height = THREE.MathUtils.clamp(look.height, 12, 56)
-    const topRadius = THREE.MathUtils.clamp(look.topRadius, 3, 24)
+    const height = THREE.MathUtils.clamp(look.height, 12, 104)
+    const topRadius = THREE.MathUtils.clamp(look.topRadius, 3, 64)
     const radialScale = topRadius / DEMO_VORTEX_ENVELOPE.radius[1]
     vortex.group.scale.set(
       radialScale,
@@ -1286,6 +1599,8 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
       radialScale,
     )
     grass.vortexTopRadius.value = topRadius
+    hurricaneDebris.height.value = height
+    hurricaneDebris.topRadius.value = topRadius
   }
 
   function setVortexTarget(point: THREE.Vector3): boolean {
@@ -1293,8 +1608,9 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
       !Number.isFinite(point.x)
       || !Number.isFinite(point.z)
     ) return false
-    const x = THREE.MathUtils.clamp(point.x, -96, 96)
-    const z = THREE.MathUtils.clamp(point.z, -96, 96)
+    const movementLimit = currentPreset === 'storm' ? 32 : 96
+    const x = THREE.MathUtils.clamp(point.x, -movementLimit, movementLimit)
+    const z = THREE.MathUtils.clamp(point.z, -movementLimit, movementLimit)
     vortexTarget.set(x, terrainHeightAt(x, z) + 0.25, z)
     targetMarker.command(
       x,
@@ -1307,9 +1623,11 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
 
   function setPreset(preset: DemoPresetId): void {
     currentPreset = preset
-    grass.preset.value = preset === 'breeze' ? 0 : 1
+    grass.preset.value = preset === 'breeze' ? 0 : preset === 'storm' ? 2 : 1
     const vortexActive = usesVortexField(preset)
     vortex.group.visible = vortexActive
+    hurricaneDebris.group.visible = preset === 'storm'
+    hurricaneDebris.group.position.copy(vortexCenter)
     sculpture.group.visible = !vortexActive
     rocks.visible = !vortexActive
     if (!vortexActive) {
@@ -1321,11 +1639,13 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     if (preset === 'storm') {
       targetMarker.setColor(0xd8f6ff)
       targetFog.set(0x587178)
+      targetFogDensity = 0.0022
       targetSunIntensity = 1.45
       vortex.dust.material.color.set(0xdceff2)
       vortex.glow.material.color.set(0x91d7e6)
       vortex.halo.material.color.set(0x587b8b)
       vortex.contactLight.color.set(0xc9eff7)
+      vortex.contactLight.distance = 100
       vortexGlowStrength = 0.36
       vortexHaloStrength = 0.075
       vortexContactLightIntensity = 112
@@ -1335,11 +1655,13 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     } else if (preset === 'water') {
       targetMarker.setColor(0xd5f8ff)
       targetFog.set(0xb7dbe0)
+      targetFogDensity = 0.0037
       targetSunIntensity = 4.35
       vortex.dust.material.color.set(0xefffff)
       vortex.glow.material.color.set(0x7ee8ff)
       vortex.halo.material.color.set(0x54cfe8)
       vortex.contactLight.color.set(0xd8fbff)
+      vortex.contactLight.distance = 26
       vortexGlowStrength = 0.44
       vortexHaloStrength = 0.09
       vortexContactLightIntensity = 125
@@ -1349,11 +1671,13 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     } else if (preset === 'fire') {
       targetMarker.setColor(0xffa34f)
       targetFog.set(0x4f514d)
+      targetFogDensity = 0.0037
       targetSunIntensity = 1.4
       vortex.dust.material.color.set(0xffffc0)
       vortex.glow.material.color.set(0xff8a00)
       vortex.halo.material.color.set(0xff3d00)
       vortex.contactLight.color.set(0xff5418)
+      vortex.contactLight.distance = 26
       vortexGlowStrength = 0.62
       vortexHaloStrength = 0.11
       vortexContactLightIntensity = 185
@@ -1363,11 +1687,13 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     } else if (preset === 'tornado') {
       targetMarker.setColor(0xcfffd0)
       targetFog.set(0x90a99d)
+      targetFogDensity = 0.0037
       targetSunIntensity = 4.2
       vortex.dust.material.color.set(0xd9bf75)
       vortex.glow.material.color.set(0x9ed9b6)
       vortex.halo.material.color.set(0x65b990)
       vortex.contactLight.color.set(0xbce6c3)
+      vortex.contactLight.distance = 26
       vortexGlowStrength = 0.24
       vortexHaloStrength = 0.052
       vortexContactLightIntensity = 68
@@ -1376,6 +1702,7 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
       }
     } else {
       targetFog.set(0x90aca4)
+      targetFogDensity = 0.0037
       targetSunIntensity = 3.8
     }
   }
@@ -1384,7 +1711,14 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
     worldTimeSeconds = timeSeconds
     targetMarker.update(timeSeconds)
     const blend = 1 - Math.exp(-2.8 * Math.min(0.05, deltaSeconds))
-    if (scene.fog instanceof THREE.FogExp2) scene.fog.color.lerp(targetFog, blend)
+    if (scene.fog instanceof THREE.FogExp2) {
+      scene.fog.color.lerp(targetFog, blend)
+      scene.fog.density = THREE.MathUtils.lerp(
+        scene.fog.density,
+        targetFogDensity,
+        blend,
+      )
+    }
     sun.intensity = THREE.MathUtils.lerp(sun.intensity, targetSunIntensity, blend)
 
     sculpture.rings[0]?.rotation.set(
@@ -1480,6 +1814,8 @@ export function createDemoWorld(scene: THREE.Scene): DemoWorld {
         1 - Math.exp(-VORTEX_LEAN_RESPONSE * delta),
       )
       vortex.group.position.copy(vortexCenter)
+      hurricaneDebris.group.position.copy(vortexCenter)
+      hurricaneDebris.time.value = timeSeconds
       grass.vortexCenter.value.set(vortexCenter.x, vortexCenter.z)
       vortex.time.value = timeSeconds
       const impactWave = Math.sin(timeSeconds * 4.2) * 0.5 + 0.5

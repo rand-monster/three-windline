@@ -92,6 +92,7 @@ export function createWindLineMaterial(
   material.depthWrite = depthWrite
   material.depthTest = depthTest
   material.side = DoubleSide
+  material.forceSinglePass = true
   material.blending = blending === 'additive' ? AdditiveBlending : NormalBlending
   material.toneMapped = true
   material.alphaToCoverage = false

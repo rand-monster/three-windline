@@ -227,18 +227,41 @@ async function runVariant(browser, backend) {
       initial.activeLines > 0,
       `${backend} snapshot must report visible wind lines`,
     )
-    const rendererTelemetry = await page.evaluate(() => {
+    const rendererTelemetry = await page.evaluate(async () => {
       const demo = globalThis.__threeWindlineDemo
-      const state = demo?.snapshot()
-      return {
-        snapshotDraws: Number(state?.draws),
-        snapshotPasses: Number(state?.passes),
-        rendererDraws: Number(demo?.renderer.info.render.drawCalls),
-        rendererPasses: Number(demo?.renderer.info.render.frameCalls),
+      const backend = demo?.renderer.backend
+      const originalDraw = backend?.draw
+      let measuredWindlineDraws = 0
+      if (!demo || !backend || typeof originalDraw !== 'function') {
+        throw new Error('Demo renderer backend is unavailable')
+      }
+      backend.draw = function (renderObject, info) {
+        if (renderObject?.object === demo.windline.mesh) measuredWindlineDraws += 1
+        return originalDraw.call(this, renderObject, info)
+      }
+      try {
+        await new Promise(resolve => requestAnimationFrame(resolve))
+        measuredWindlineDraws = 0
+        await new Promise(resolve => requestAnimationFrame(resolve))
+        const state = demo.snapshot()
+        return {
+          snapshotDraws: Number(state.draws),
+          snapshotPasses: Number(state.passes),
+          rendererDraws: Number(demo.renderer.info.render.drawCalls),
+          rendererPasses: Number(demo.renderer.info.render.frameCalls),
+          measuredWindlineDraws,
+        }
+      } finally {
+        backend.draw = originalDraw
       }
     })
     assert.equal(rendererTelemetry.snapshotDraws, rendererTelemetry.rendererDraws)
     assert.equal(rendererTelemetry.snapshotPasses, rendererTelemetry.rendererPasses)
+    assert.equal(
+      rendererTelemetry.measuredWindlineDraws,
+      initial.drawCalls,
+      `${backend} backend draws must match windline stats`,
+    )
     assert.ok(rendererTelemetry.snapshotDraws >= initial.drawCalls)
     assert.ok(rendererTelemetry.snapshotPasses > 0)
     assert.deepEqual(initial.raw.bloom, {

@@ -620,6 +620,7 @@ test('system update is one instanced draw with no instance matrix or seed upload
     assert.equal(geometry.getAttribute('instanceMatrix'), undefined)
     assert.equal(system.mesh.children.length, 0)
     assert.equal(Array.isArray(system.mesh.material), false)
+    assert.equal(system.mesh.material.forceSinglePass, true)
 
     for (let index = 0; index < 240; index += 1) {
       frame.timeSeconds = index / 60
